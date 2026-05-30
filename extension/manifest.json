@@ -1,0 +1,60 @@
+{
+  "manifest_version": 3,
+  "name": "EcoHealth Lens",
+  "version": "1.2.0",
+  "description": "Eco and health scores for Amazon India products — informational only.",
+  "permissions": [
+    "storage",
+    "sidePanel",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://www.amazon.in/*",
+    "http://localhost:3000/*"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.amazon.in/*",
+        "https://amazon.in/*"
+      ],
+      "js": [
+        "content/amazon-in-bundle.js"
+      ],
+      "css": [
+        "content/ui/badge.css"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel/panel.html"
+  },
+  "action": {
+    "default_title": "EcoHealth Lens",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "content/selectors/amazon-in.json"
+      ],
+      "matches": [
+        "https://www.amazon.in/*"
+      ]
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "name": "ecohealth-backend",
+  "version": "1.0.0",
+  "description": "EcoHealth Lens analysis API (Node http server; optional Fastify)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "start:fastify": "node server-fastify.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "tesseract.js": "^5.1.1"
+  },
+  "optionalDependencies": {
+    "fastify": "^5.2.1"
+  }
+}

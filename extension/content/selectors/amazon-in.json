@@ -1,0 +1,13 @@
+{
+  "title": ["#productTitle"],
+  "breadcrumbs": ["#wayfinding-breadcrumbs_feature_div"],
+  "importantInfo": ["#important-information"],
+  "detailBullets": ["#detailBullets_feature_div", "#detailBulletsWrapper_feature_div"],
+  "productDetails": ["#productDetails_feature_div", "#prodDetails"],
+  "techSpec": ["#productDetails_techSpec_section_1", "#productDetails_detailBullets_sections1"],
+  "nutritionKeywords": ["nutrition", "nutritional", "nutrients", "per 100g", "per 100 g"],
+  "ingredientKeywords": ["ingredients", "ingredient", "contains"],
+  "barcodeLabels": ["ean", "upc", "barcode", "gtin", "item model number"],
+  "landingImage": ["#landingImage", "#imgTagWrapperId img"],
+  "galleryImages": ["#altImages img", "#imageBlock img", "#ivImagesTab img", ".imageThumbnail img"]
+}

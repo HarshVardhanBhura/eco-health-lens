@@ -1,0 +1,8 @@
+node_modules/
+.tools/
+backend/data/cache.db
+backend/data/cache.db-*
+backend/data/cache.json
+.DS_Store
+*.log
+.env

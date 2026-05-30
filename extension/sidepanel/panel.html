@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EcoHealth Lens</title>
+  <link rel="stylesheet" href="panel.css" />
+</head>
+<body>
+  <header class="panel-header">
+    <h1 id="product-title">EcoHealth Lens</h1>
+    <p id="confidence" class="confidence">—</p>
+  </header>
+
+  <main id="panel-main">
+    <section id="loading" class="state-block">Loading analysis…</section>
+    <section id="error" class="state-block hidden"></section>
+    <section id="low-confidence" class="state-block hidden warning"></section>
+
+    <section id="health-section" class="hidden">
+      <div class="score-header">
+        <div class="big-score" id="health-total">—</div>
+        <div>
+          <span class="score-label" id="health-score-label">Health score</span>
+          <span id="health-grade" class="grade-pill"></span>
+          <p id="health-variant-hint" class="variant-hint hidden"></p>
+        </div>
+      </div>
+      <button type="button" id="variants-toggle" class="variants-toggle hidden" aria-expanded="false">
+        Compare all variants
+      </button>
+      <section id="variants-section" class="variants-section hidden" aria-hidden="true"></section>
+      <h2>Why this score</h2>
+      <ul id="health-rationale" class="rationale-list"></ul>
+      <button type="button" id="health-breakdown-toggle" class="breakdown-toggle" aria-expanded="false">
+        Full breakdown
+      </button>
+      <div id="health-breakdown" class="health-breakdown hidden" aria-hidden="true">
+        <h2 id="macros-heading">Nutrition highlights</h2>
+        <div id="macro-bars" class="macro-bars"></div>
+        <div id="health-components" class="sub-scores"></div>
+      </div>
+    </section>
+
+    <section id="eco-section" class="hidden">
+      <div class="score-header">
+        <div class="big-score eco" id="eco-total">—</div>
+        <div>
+          <span class="score-label">Eco score</span>
+          <span id="eco-grade" class="grade-pill"></span>
+        </div>
+      </div>
+      <h2>Why this score</h2>
+      <ul id="eco-rationale" class="rationale-list"></ul>
+    </section>
+
+    <section id="ingredients-section" class="hidden">
+      <h2 id="ingredients-heading">Flagged ingredients</h2>
+      <ul id="ingredients-list" class="ingredients-list"></ul>
+      <button type="button" id="ingredients-expand" class="breakdown-toggle hidden" aria-expanded="false">
+        Show all ingredients
+      </button>
+    </section>
+  </main>
+
+  <footer class="panel-footer">
+    <p id="disclaimer">Informational only — not medical or environmental certification.</p>
+    <p id="sources" class="sources"></p>
+  </footer>
+
+  <script type="module" src="panel.js"></script>
+</body>
+</html>

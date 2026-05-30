@@ -1,0 +1,122 @@
+{
+  "red": [
+    {
+      "id": "ins_102",
+      "aliases": ["ins 102", "e102", "tartrazine", "fd&c yellow 5", "yellow 5"],
+      "severity": "high",
+      "reason": "Artificial colour (Tartrazine / INS 102)"
+    },
+    {
+      "id": "ins_110",
+      "aliases": ["ins 110", "e110", "sunset yellow", "fd&c yellow 6", "yellow 6"],
+      "severity": "high",
+      "reason": "Artificial colour (Sunset Yellow / INS 110)"
+    },
+    {
+      "id": "ins_129",
+      "aliases": ["ins 129", "e129", "allura red", "red 40"],
+      "severity": "high",
+      "reason": "Artificial colour (Allura Red / INS 129)"
+    },
+    {
+      "id": "hfcs",
+      "aliases": ["high fructose corn syrup", "hfcs", "glucose-fructose syrup", "fructose-glucose syrup"],
+      "severity": "high",
+      "reason": "High-fructose corn syrup — high added sugar load"
+    },
+    {
+      "id": "trans_fat",
+      "aliases": ["partially hydrogenated", "hydrogenated vegetable oil", "trans fat", "trans fats"],
+      "severity": "high",
+      "reason": "Trans / partially hydrogenated fats"
+    },
+    {
+      "id": "sodium_nitrite",
+      "aliases": ["sodium nitrite", "e250", "ins 250", "potassium nitrite"],
+      "severity": "high",
+      "reason": "Processed meat preservative (nitrite)"
+    },
+    {
+      "id": "ins_211",
+      "aliases": ["sodium benzoate", "ins 211", "e211", "benzoic acid"],
+      "severity": "medium",
+      "reason": "Preservative — may form benzene with vitamin C"
+    },
+    {
+      "id": "ins_320",
+      "aliases": ["bha", "butylated hydroxyanisole", "ins 320", "e320"],
+      "severity": "medium",
+      "reason": "Synthetic antioxidant (BHA)"
+    },
+    {
+      "id": "ins_321",
+      "aliases": ["bht", "butylated hydroxytoluene", "ins 321", "e321"],
+      "severity": "medium",
+      "reason": "Synthetic antioxidant (BHT)"
+    },
+    {
+      "id": "aspartame",
+      "aliases": ["aspartame", "e951", "ins 951"],
+      "severity": "medium",
+      "reason": "Artificial sweetener"
+    },
+    {
+      "id": "acesulfame",
+      "aliases": ["acesulfame k", "acesulfame potassium", "e950"],
+      "severity": "low",
+      "reason": "Artificial sweetener"
+    },
+    {
+      "id": "msg",
+      "aliases": ["monosodium glutamate", "msg", "e621", "ins 621"],
+      "severity": "low",
+      "reason": "Flavour enhancer (MSG)"
+    },
+    {
+      "id": "ins_407",
+      "aliases": ["carrageenan", "e407", "ins 407"],
+      "severity": "medium",
+      "reason": "Thickener — some studies flag gut irritation"
+    },
+    {
+      "id": "palm_oil",
+      "aliases": ["palm oil", "palm kernel oil"],
+      "severity": "medium",
+      "reason": "Palm oil — deforestation concerns"
+    },
+    {
+      "id": "artificial_flavour",
+      "aliases": ["artificial flavour", "artificial flavor", "artificial flavouring", "artificial flavoring"],
+      "severity": "low",
+      "reason": "Non-specific artificial flavour"
+    },
+    {
+      "id": "sodium_benzoate_combo",
+      "aliases": ["sodium metabisulphite", "sodium metabisulfite", "e223"],
+      "severity": "medium",
+      "reason": "Sulphite preservative — sensitivity risk"
+    }
+  ],
+  "green": [
+    {
+      "id": "whole_grain",
+      "aliases": ["whole grain", "whole wheat", "wholegrain", "wholemeal"],
+      "reason": "Whole grain ingredient"
+    },
+    {
+      "id": "olive_oil",
+      "aliases": ["extra virgin olive oil", "olive oil"],
+      "reason": "Heart-healthy fat source"
+    },
+    {
+      "id": "oats",
+      "aliases": ["rolled oats", "oat flour", "steel cut oats"],
+      "reason": "Whole grain oats"
+    },
+    {
+      "id": "legumes",
+      "aliases": ["lentils", "chickpeas", "beans", "peas"],
+      "reason": "Plant protein / fiber"
+    }
+  ]
+}

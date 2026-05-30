@@ -1,0 +1,151 @@
+{
+  "materials": [
+    {
+      "id": "organic_cotton",
+      "name": "Organic cotton",
+      "aliases": ["organic cotton", "organic cotton fabric"],
+      "impact": 14,
+      "reason": "Renewable natural fiber with lower pesticide use than conventional cotton"
+    },
+    {
+      "id": "cotton",
+      "name": "Cotton",
+      "aliases": ["cotton", "100% cotton", "pure cotton"],
+      "impact": 6,
+      "reason": "Natural biodegradable fiber; conventional cotton is water-intensive"
+    },
+    {
+      "id": "linen",
+      "name": "Linen",
+      "aliases": ["linen", "flax"],
+      "impact": 10,
+      "reason": "Natural fiber, typically lower water use than cotton"
+    },
+    {
+      "id": "hemp",
+      "name": "Hemp",
+      "aliases": ["hemp", "hemp fabric"],
+      "impact": 12,
+      "reason": "Fast-growing natural fiber with low pesticide needs"
+    },
+    {
+      "id": "wool",
+      "name": "Wool",
+      "aliases": ["wool", "merino wool", "lambswool"],
+      "impact": 4,
+      "reason": "Natural animal fiber; impacts depend on farming practices"
+    },
+    {
+      "id": "silk",
+      "name": "Silk",
+      "aliases": ["silk"],
+      "impact": 2,
+      "reason": "Natural protein fiber; energy use in processing varies"
+    },
+    {
+      "id": "bamboo",
+      "name": "Bamboo",
+      "aliases": ["bamboo", "bamboo fiber", "bamboo rayon"],
+      "impact": 3,
+      "reason": "Often rayon from bamboo; processing chemicals may apply"
+    },
+    {
+      "id": "recycled_polyester",
+      "name": "Recycled polyester",
+      "aliases": ["recycled polyester", "rpet", "recycled pet"],
+      "impact": 5,
+      "reason": "Synthetic but diverts plastic from landfill"
+    },
+    {
+      "id": "polyester",
+      "name": "Polyester",
+      "aliases": ["polyester", "poly fabric", "polyamide blend"],
+      "impact": -10,
+      "reason": "Petroleum-based synthetic; microplastic shedding when washed"
+    },
+    {
+      "id": "nylon",
+      "name": "Nylon",
+      "aliases": ["nylon", "polyamide"],
+      "impact": -10,
+      "reason": "Synthetic polymer; energy-intensive production"
+    },
+    {
+      "id": "acrylic",
+      "name": "Acrylic",
+      "aliases": ["acrylic"],
+      "impact": -12,
+      "reason": "Synthetic fiber; sheds microplastics"
+    },
+    {
+      "id": "spandex",
+      "name": "Spandex / elastane",
+      "aliases": ["spandex", "elastane", "lycra"],
+      "impact": -6,
+      "reason": "Synthetic stretch fiber, usually blended"
+    },
+    {
+      "id": "pu_leather",
+      "name": "PU / faux leather",
+      "aliases": ["pu leather", "faux leather", "vegan leather", "synthetic leather"],
+      "impact": -8,
+      "reason": "Plastic-based alternative to leather"
+    },
+    {
+      "id": "leather",
+      "name": "Leather",
+      "aliases": ["genuine leather", "real leather", "leather upper"],
+      "impact": -6,
+      "reason": "Animal hide; tanning chemicals and methane from livestock"
+    },
+    {
+      "id": "pvc",
+      "name": "PVC / vinyl",
+      "aliases": ["pvc", "vinyl", "polyvinyl"],
+      "impact": -18,
+      "reason": "Plastic with harmful additives; hard to recycle"
+    },
+    {
+      "id": "rubber",
+      "name": "Rubber",
+      "aliases": ["rubber", "natural rubber"],
+      "impact": -2,
+      "reason": "Durable; natural rubber is better than synthetic"
+    },
+    {
+      "id": "stainless_steel",
+      "name": "Stainless steel",
+      "aliases": ["stainless steel", "steel body"],
+      "impact": 4,
+      "reason": "Durable and recyclable metal"
+    },
+    {
+      "id": "aluminium",
+      "name": "Aluminium",
+      "aliases": ["aluminium", "aluminum"],
+      "impact": 2,
+      "reason": "Recyclable metal; smelting is energy-intensive"
+    },
+    {
+      "id": "glass",
+      "name": "Glass",
+      "aliases": ["glass", "borosilicate"],
+      "impact": 6,
+      "reason": "Inert and recyclable"
+    },
+    {
+      "id": "silicone",
+      "name": "Silicone",
+      "aliases": ["silicone", "food-grade silicone"],
+      "impact": 0,
+      "reason": "Durable synthetic; not widely curbside recyclable"
+    },
+    {
+      "id": "wood",
+      "name": "Wood",
+      "aliases": ["wood", "bamboo wood", "solid wood", "teak", "sheesham"],
+      "impact": 5,
+      "reason": "Renewable if responsibly sourced (FSC helps)"
+    }
+  ]
+}
