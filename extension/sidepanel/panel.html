@@ -22,12 +22,12 @@
         <div class="big-score" id="health-total">—</div>
         <div>
           <span class="score-label" id="health-score-label">Health score</span>
-          <span id="health-grade" class="grade-pill"></span>
+          <button type="button" id="health-grade" class="grade-pill hidden" aria-haspopup="dialog" aria-expanded="false" title="What does this grade mean?"></button>
           <p id="health-variant-hint" class="variant-hint hidden"></p>
         </div>
       </div>
       <button type="button" id="variants-toggle" class="variants-toggle hidden" aria-expanded="false">
-        Compare all variants
+        Flavours in this pack
       </button>
       <section id="variants-section" class="variants-section hidden" aria-hidden="true"></section>
       <h2>Why this score</h2>
@@ -47,7 +47,7 @@
         <div class="big-score eco" id="eco-total">—</div>
         <div>
           <span class="score-label">Eco score</span>
-          <span id="eco-grade" class="grade-pill"></span>
+          <button type="button" id="eco-grade" class="grade-pill" aria-haspopup="dialog" aria-expanded="false" title="What does this grade mean?"></button>
         </div>
       </div>
       <h2>Why this score</h2>
@@ -62,6 +62,21 @@
       </button>
     </section>
   </main>
+
+  <div id="grade-popover" class="grade-popover hidden" role="dialog" aria-modal="false" aria-labelledby="grade-popover-title">
+    <header class="grade-popover-header">
+      <h3 id="grade-popover-title">Grade</h3>
+      <button type="button" id="grade-popover-close" class="grade-popover-close" aria-label="Close">×</button>
+    </header>
+    <p id="grade-popover-band" class="grade-popover-band"></p>
+    <p id="grade-popover-summary" class="grade-popover-summary"></p>
+    <p class="grade-popover-label">Often includes</p>
+    <ul id="grade-popover-often" class="grade-popover-often"></ul>
+    <p id="grade-popover-product-label" class="grade-popover-label hidden">For this product</p>
+    <ul id="grade-popover-product" class="grade-popover-product hidden"></ul>
+    <p id="grade-popover-disclaimer" class="grade-popover-disclaimer"></p>
+    <button type="button" id="grade-popover-cta" class="breakdown-toggle">See why this score</button>
+  </div>
 
   <footer class="panel-footer">
     <p id="disclaimer">Informational only — not medical or environmental certification.</p>

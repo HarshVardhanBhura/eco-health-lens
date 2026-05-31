@@ -2,9 +2,129 @@
  * Side panel — renders AnalysisResult from session storage.
  */
 
+import { getGradeGuide, normalizeGrade, getBandLabel } from './grade-guide.js';
+
 /** @param {string} id */
 function $(id) {
   return document.getElementById(id);
+}
+
+/** @type {HTMLElement | null} */
+let activeGradePill = null;
+
+/** @type {{ onSeeWhy?: () => void } | null} */
+let activeGradeContext = null;
+
+function closeGradePopover() {
+  const pop = $('grade-popover');
+  pop?.classList.add('hidden');
+  pop?.setAttribute('aria-hidden', 'true');
+  if (activeGradePill) {
+    activeGradePill.setAttribute('aria-expanded', 'false');
+    activeGradePill = null;
+  }
+  activeGradeContext = null;
+}
+
+function initGradePopover() {
+  $('grade-popover-close')?.addEventListener('click', closeGradePopover);
+  $('grade-popover-cta')?.addEventListener('click', () => {
+    activeGradeContext?.onSeeWhy?.();
+    closeGradePopover();
+  });
+  document.addEventListener('click', (e) => {
+    const pop = $('grade-popover');
+    if (!pop || pop.classList.contains('hidden')) return;
+    const t = /** @type {HTMLElement} */ (e.target);
+    if (pop.contains(t) || t.closest('.grade-pill')) return;
+    closeGradePopover();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeGradePopover();
+  });
+}
+
+/**
+ * @param {HTMLElement} pill
+ * @param {'health' | 'eco'} type
+ * @param {string} grade
+ * @param {string} labelPrefix e.g. "Grade" or "Avg grade"
+ * @param {Array<{ text: string }>} [productRationale]
+ * @param {() => void} [onSeeWhy]
+ */
+function wireGradePill(pill, type, grade, labelPrefix, productRationale, onSeeWhy) {
+  const g = normalizeGrade(grade);
+  if (!g || !pill) return;
+
+  pill.textContent = `${labelPrefix} ${g}`;
+  pill.classList.remove('hidden');
+  pill.className = `grade-pill grade-${g.toLowerCase()}`;
+  pill.setAttribute('aria-label', `${labelPrefix} ${g}. Tap for what this band means.`);
+
+  pill.onclick = (e) => {
+    e.stopPropagation();
+    openGradePopover(pill, type, g, productRationale, onSeeWhy);
+  };
+}
+
+/**
+ * @param {HTMLElement} anchor
+ * @param {'health' | 'eco'} type
+ * @param {string} grade
+ * @param {Array<{ text: string }>} [productRationale]
+ * @param {() => void} [onSeeWhy]
+ */
+function openGradePopover(anchor, type, grade, productRationale, onSeeWhy) {
+  const guide = getGradeGuide(type, grade);
+  if (!guide) return;
+
+  if (activeGradePill && activeGradePill !== anchor) {
+    activeGradePill.setAttribute('aria-expanded', 'false');
+  }
+  activeGradePill = anchor;
+  activeGradeContext = { onSeeWhy };
+
+  const pop = $('grade-popover');
+  const title = type === 'eco' ? `Eco grade ${guide.grade}` : `Health grade ${guide.grade}`;
+  $('grade-popover-title').textContent = title;
+  $('grade-popover-band').textContent = `${getBandLabel(guide.grade)} · ${guide.band.label}`;
+  $('grade-popover-summary').textContent = guide.summary;
+
+  const oftenEl = $('grade-popover-often');
+  oftenEl.innerHTML = '';
+  for (const line of guide.often) {
+    const li = document.createElement('li');
+    li.textContent = line;
+    oftenEl.appendChild(li);
+  }
+
+  const productLabel = $('grade-popover-product-label');
+  const productEl = $('grade-popover-product');
+  const bullets = (productRationale || []).filter((r) => r?.text).slice(0, 2);
+  if (bullets.length) {
+    productLabel?.classList.remove('hidden');
+    productEl?.classList.remove('hidden');
+    productEl.innerHTML = '';
+    for (const r of bullets) {
+      const li = document.createElement('li');
+      li.textContent = r.text;
+      productEl.appendChild(li);
+    }
+  } else {
+    productLabel?.classList.add('hidden');
+    productEl?.classList.add('hidden');
+  }
+
+  $('grade-popover-disclaimer').textContent = guide.disclaimer;
+  const cta = $('grade-popover-cta');
+  if (cta) {
+    cta.classList.toggle('hidden', !onSeeWhy);
+    cta.textContent = type === 'health' ? 'See why this score' : 'See eco rationale';
+  }
+
+  pop?.classList.remove('hidden');
+  pop?.setAttribute('aria-hidden', 'false');
+  anchor.setAttribute('aria-expanded', 'true');
 }
 
 function hideAllSections() {
@@ -108,15 +228,13 @@ function renderVariants(variants) {
   section.classList.add('hidden');
   section.setAttribute('aria-hidden', 'true');
   toggle.setAttribute('aria-expanded', 'false');
-  toggle.textContent = `Compare all ${variants.length} variants`;
+  toggle.textContent = 'Flavours in this pack';
 
   const flipVariants = () => {
     const open = section.classList.toggle('hidden');
     toggle.setAttribute('aria-expanded', String(!open));
     section.setAttribute('aria-hidden', String(open));
-    toggle.textContent = open
-      ? `Compare all ${variants.length} variants`
-      : 'Hide variant breakdown';
+    toggle.textContent = open ? 'Flavours in this pack' : 'Hide flavour breakdown';
   };
   toggle.onclick = flipVariants;
   section._flipVariants = flipVariants;
@@ -130,7 +248,9 @@ function renderVariants(variants) {
         ? 'From pack label'
         : v.dataSource === 'ingredients_est'
           ? 'Estimated from ingredients'
-          : '';
+          : v.dataSource === 'listing'
+            ? 'Listing only (pack label not read)'
+            : '';
     const summary = v.summaryLine || h.rationale?.[0]?.text || '';
 
     card.innerHTML = `
@@ -141,7 +261,8 @@ function renderVariants(variants) {
         </div>
         <div class="variant-scores">
           <span class="variant-score">${h.total ?? '—'}</span>
-          <span class="variant-grade">${h.grade ? `Grade ${h.grade}` : ''}${src ? ` · ${src}` : ''}</span>
+          ${h.grade ? `<button type="button" class="grade-pill grade-pill-sm grade-${String(h.grade).toLowerCase()} variant-grade-btn" data-grade="${h.grade}">Grade ${h.grade}</button>` : ''}
+          ${src ? `<span class="variant-src">${src}</span>` : ''}
         </div>
       </header>
       <div class="variant-details hidden"></div>
@@ -166,9 +287,29 @@ function renderVariants(variants) {
     }
     details.innerHTML = detailHtml || '<p class="variant-detail-title">No extra detail</p>';
 
-    card.querySelector('.variant-card-header').addEventListener('click', () => {
+    const header = card.querySelector('.variant-card-header');
+    header.addEventListener('click', (e) => {
+      if (/** @type {HTMLElement} */ (e.target).closest('.variant-grade-btn')) return;
       details.classList.toggle('hidden');
     });
+
+    const gradeBtn = card.querySelector('.variant-grade-btn');
+    if (gradeBtn && h.grade) {
+      gradeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openGradePopover(
+          /** @type {HTMLElement} */ (gradeBtn),
+          'health',
+          h.grade,
+          h.rationale,
+          () => {
+            details.classList.remove('hidden');
+            details.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+        );
+      });
+    }
+
     section.appendChild(card);
   }
 }
@@ -251,6 +392,7 @@ function renderFlaggedIngredients(ingredients) {
 
 /** @param {import('../shared/types.js').AnalysisResult} result */
 function render(result) {
+  closeGradePopover();
   hideAllSections();
 
   $('product-title').textContent = result.title || 'Product analysis';
@@ -283,10 +425,10 @@ function render(result) {
     const hintEl = $('health-variant-hint');
     const hasVariants = result.variants?.length >= 2;
     if (hasVariants) {
-      if (labelEl) labelEl.textContent = 'Average health score';
+      if (labelEl) labelEl.textContent = 'Health score';
       if (hintEl) {
-        hintEl.classList.remove('hidden');
-        hintEl.textContent = `Avg. of ${result.variants.length} variants — compare below`;
+        hintEl.classList.add('hidden');
+        hintEl.textContent = '';
       }
       renderVariants(result.variants);
       const scoreHeader = document.querySelector('#health-section .score-header');
@@ -307,12 +449,24 @@ function render(result) {
 
     const grade = $('health-grade');
     if (result.health.grade) {
-      grade.textContent = hasVariants
-        ? `Avg grade ${result.health.grade}`
-        : `Grade ${result.health.grade}`;
-      grade.classList.remove('hidden');
+      const prefix = 'Grade';
+      wireGradePill(
+        grade,
+        'health',
+        result.health.grade,
+        prefix,
+        result.health.rationale,
+        () => {
+          $('health-rationale')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          const breakdownToggle = $('health-breakdown-toggle');
+          const breakdown = $('health-breakdown');
+          if (breakdown?.classList.contains('hidden') && breakdownToggle) {
+            breakdownToggle.click();
+          }
+        }
+      );
     } else {
-      grade.textContent = '';
+      grade?.classList.add('hidden');
     }
 
     renderRationaleList($('health-rationale'), result.health.rationale);
@@ -337,7 +491,15 @@ function render(result) {
     $('eco-total').textContent = noEcoScore ? 'N/A' : String(result.eco.total);
     $('eco-total').classList.toggle('eco-na', noEcoScore);
     const eg = $('eco-grade');
-    eg.textContent = noEcoScore ? 'No score' : result.eco.grade ? `Grade ${result.eco.grade}` : '';
+    if (noEcoScore || !result.eco.grade) {
+      eg.textContent = noEcoScore ? 'No score' : '';
+      eg.classList.add('hidden');
+      eg.onclick = null;
+    } else {
+      wireGradePill(eg, 'eco', result.eco.grade, 'Grade', result.eco.rationale, () => {
+        $('eco-rationale')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
 
     renderRationaleList($('eco-rationale'), result.eco.rationale);
   }
@@ -384,6 +546,7 @@ async function load() {
   loadForTab(tabId);
 }
 
+initGradePopover();
 load();
 
 chrome.runtime.onMessage.addListener((message) => {

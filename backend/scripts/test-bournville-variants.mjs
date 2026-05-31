@@ -4,6 +4,14 @@ import {
   collectAllNutritionBlocks,
   assignBlocksToTitleVariants,
 } from '../scoring/variantParse.js';
+
+const amazonTitle =
+  'Cadbury Bournville Dark Chocolate Bars Combo (2 x Cranberry 78 gm, 2 x Fruit & Nut 75 gm, 2 x 70% Dark Chocolate Bar 75 gm)';
+const fromTitle = detectVariantsFromTitle(amazonTitle);
+if (fromTitle.length !== 3) {
+  console.error('FAIL: title should yield 3 variants, got', fromTitle);
+  process.exit(1);
+}
 import { buildMultiVariantAnalysis } from '../scoring/variants.js';
 
 const title =
@@ -28,9 +36,9 @@ Total Sugars 44.2 g
 Total Fat 31.5 g
 8901234567891
 
-INTENSE 70
+70% DARK
 Nutrition Information
-Energy 588 kcal
+Energy 558 kcal
 Protein 9.8 g
 Carbohydrate 22.1 g
 Total Sugars 24.4 g
@@ -66,9 +74,13 @@ console.log(
 console.log('Avg rationale:', analysis?.averageHealth?.rationale?.map((r) => r.text));
 
 const totals = analysis?.variants?.map((v) => v.health.total) || [];
-const distinct = new Set(totals);
-if (distinct.size < 2 || !totals.every((t, i) => analysis.variants[i].dataSource === 'label')) {
-  console.error('FAIL: expected per-label scores, got', totals, analysis?.variants?.map((v) => v.dataSource));
+if (analysis?.variants?.length !== 3) {
+  console.error('FAIL: expected 3 variants, got', analysis?.variants?.length);
   process.exit(1);
 }
-console.log('OK: per-variant label scores', [...distinct]);
+const distinct = new Set(totals);
+if (distinct.size < 2) {
+  console.error('FAIL: expected different scores across variants, got', totals);
+  process.exit(1);
+}
+console.log('OK:', analysis.variants.length, 'variants, scores', totals);

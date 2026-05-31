@@ -6,7 +6,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const CACHE_FILE = process.env.CACHE_FILE || join(__dirname, '..', 'data', 'cache.json');
 const TTL_SECONDS = 7 * 24 * 60 * 60;
 /** Bump when scoring/extraction logic changes to invalidate old cached results. */
-export const CACHE_SCHEMA_VERSION = 'v9';
+export const CACHE_SCHEMA_VERSION = 'v12';
 
 /** @type {Record<string, { payload: object, created_at: number }>} */
 let memory = {};

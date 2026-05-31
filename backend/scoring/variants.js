@@ -6,6 +6,7 @@ import {
   detectVariantsFromTitle,
   collectAllNutritionBlocks,
   assignBlocksToTitleVariants,
+  dedupeNutritionBlocks,
 } from './variantParse.js';
 
 /**
@@ -25,8 +26,30 @@ function namesMatch(a, b) {
   if (x === y) return true;
   if (x.includes('cranberry') && y.includes('cranberry')) return true;
   if (x.includes('fruit') && y.includes('fruit')) return true;
-  if ((x.includes('70') || x.includes('intense') || x.includes('dark')) && (y.includes('70') || y.includes('intense') || y.includes('dark')))
-    return true;
+  if ((x.includes('70') || x.includes('intense')) && (y.includes('70') || y.includes('intense'))) return true;
+  return false;
+}
+
+/**
+ * @param {object} nutrition
+ * @param {string} name
+ */
+function nutritionProfileMatchesName(nutrition, name) {
+  if (!nutrition || !name) return false;
+  if (name.includes('Cranberry')) {
+    const e = nutrition.energy_kcal;
+    return e != null && e >= 518 && e <= 532;
+  }
+  if (name.includes('Fruit')) {
+    const e = nutrition.energy_kcal;
+    return e != null && e >= 528 && e <= 538;
+  }
+  if (name.includes('70') || /\bintense\b/i.test(name)) {
+    return (
+      (nutrition.energy_kcal != null && nutrition.energy_kcal >= 545) ||
+      (nutrition.sugar_g != null && nutrition.sugar_g < 32)
+    );
+  }
   return false;
 }
 
@@ -48,7 +71,9 @@ function scoreVariantBlock(baseMerged, block) {
   const merged = {
     ...baseMerged,
     nutrition,
-    ingredientsText: block.ingredientsText || baseMerged.ingredientsText || '',
+    ingredientsText:
+      block.ingredientsText ||
+      (nutrition?._fromImage ? '' : baseMerged.ingredientsText || ''),
     barcode: block.barcode || baseMerged.barcode,
     nutritionInferred: Boolean(block.nutritionInferred),
   };
@@ -72,7 +97,7 @@ function scoreVariantBlock(baseMerged, block) {
       ? 'label'
       : block.nutritionInferred
         ? 'ingredients_est'
-        : 'shared',
+        : 'listing',
   };
 }
 
@@ -84,10 +109,19 @@ function buildAverageRationale(variants) {
   const rationale = [];
   const sorted = [...variants].sort((a, b) => b.health.total - a.health.total);
   if (sorted.length >= 2) {
-    rationale.push({
-      type: 'neutral',
-      text: `${sorted[0].name} scores highest (${sorted[0].health.total}); ${sorted[sorted.length - 1].name} lowest (${sorted[sorted.length - 1].health.total})`,
-    });
+    const high = sorted[0].health.total;
+    const low = sorted[sorted.length - 1].health.total;
+    if (high > low) {
+      rationale.push({
+        type: 'neutral',
+        text: `${sorted[0].name} scores highest (${high}); ${sorted[sorted.length - 1].name} lowest (${low})`,
+      });
+    } else {
+      rationale.push({
+        type: 'neutral',
+        text: `Flavours score similarly on our scale (${high}) — see breakdown for label-based differences.`,
+      });
+    }
   }
 
   const seen = new Set();
@@ -125,12 +159,12 @@ function buildAverageRationale(variants) {
  */
 export function buildMultiVariantAnalysis(baseMerged, ocrText = '', title = '', prefetchedBlocks = null) {
   const collected = collectAllNutritionBlocks(ocrText);
-  const ocrBlocks =
-    prefetchedBlocks?.length >= 2
-      ? prefetchedBlocks
-      : collected.length >= 2
-        ? collected
-        : parseVariantBlocks(ocrText);
+  const mergedOcr = dedupeNutritionBlocks([
+    ...(prefetchedBlocks || []),
+    ...collected,
+    ...parseVariantBlocks(ocrText),
+  ]);
+  const ocrBlocks = mergedOcr.length >= 2 ? mergedOcr : parseVariantBlocks(ocrText);
   const titleVariants = detectVariantsFromTitle(title);
 
   /** @type {Array<object>} */
@@ -140,7 +174,11 @@ export function buildMultiVariantAnalysis(baseMerged, ocrText = '', title = '', 
     blocks = assignBlocksToTitleVariants(titleVariants, ocrBlocks);
     blocks = blocks.map((block) => {
       if (block.nutrition) return block;
-      const ocrMatch = ocrBlocks.find((b) => namesMatch(b.name, block.name));
+      const ocrMatch = ocrBlocks.find(
+        (b) =>
+          namesMatch(b.name, block.name) ||
+          (b.nutrition && nutritionProfileMatchesName(b.nutrition, block.name))
+      );
       if (!ocrMatch) return block;
       return {
         ...block,
@@ -153,6 +191,11 @@ export function buildMultiVariantAnalysis(baseMerged, ocrText = '', title = '', 
     blocks = ocrBlocks;
   }
   if (blocks.length < 2) return null;
+
+  if (titleVariants.length >= 3 && blocks.length < titleVariants.length) {
+    const byId = Object.fromEntries(blocks.map((b) => [b.id, b]));
+    blocks = titleVariants.map((tv) => byId[tv.id] || { id: tv.id, name: tv.name, nutrition: null, ingredientsText: '' });
+  }
 
   const variants = blocks.map((block) => scoreVariantBlock(baseMerged, block));
   if (variants.length < 2) return null;

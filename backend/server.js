@@ -3,6 +3,14 @@ import { analyzeProduct } from './routes/analyze.js';
 
 const PORT = Number(process.env.PORT) || 3000;
 
+process.on('unhandledRejection', (reason) => {
+  console.error('[EcoHealth] unhandledRejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('[EcoHealth] uncaughtException:', err);
+});
+
 /**
  * @param {import('http').IncomingMessage} req
  */

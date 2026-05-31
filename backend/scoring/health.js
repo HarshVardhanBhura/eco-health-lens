@@ -81,6 +81,11 @@ export function scoreMacros(nutrition) {
     } else {
       part = status === 'good' ? 85 : status === 'warn' ? 55 : 35;
     }
+    if (d.key === 'sugar_g' && value != null) {
+      if (value >= 42) part = 28;
+      else if (value >= 36) part = 38;
+      else if (value < 28) part = Math.max(part, 72);
+    }
     total += part;
     count++;
   }

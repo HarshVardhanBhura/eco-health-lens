@@ -10,7 +10,9 @@ export function normalizeOcrText(text) {
     .replace(/k\s*c\s*a\s*l/gi, 'kcal')
     .replace(/Nutrition\s*Inf(?:ormation)?/gi, 'Nutrition Information')
     .replace(/([Ee]nergy)\s+([\d.]+)/g, '$1: $2')
-    .replace(/\s+/g, ' ');
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**
@@ -35,7 +37,8 @@ export function parseNutritionTable(text) {
   if (!text || !text.trim()) return null;
   text = normalizeOcrText(text);
 
-  const nutrition = { per: '100g' };  const patterns = [
+  const nutrition = { per: '100g' };
+  const patterns = [
     [/energy[:\s]*(?:\([^)]*\))?[:\s]*([\d.]+)\s*kcal/i, 'energy_kcal'],
     [/protein[:\s]*(?:\([^)]*\))?[:\s]*([\d.]+)\s*g/i, 'protein_g'],
     [/carbohydrate[s]?[:\s]*(?:\([^)]*\))?[:\s]*([\d.]+)\s*g/i, 'carbs_g'],

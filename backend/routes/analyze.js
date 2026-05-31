@@ -110,7 +110,8 @@ export async function analyzeProduct(payload) {
     result.health = multiVariant.averageHealth;
     result.ingredients = multiVariant.variants[0]?.ingredients || ingredients;
     if (!sources.includes('combo_variants')) sources.push('combo_variants');
-    result.message = `Average health across ${multiVariant.variants.length} variants — tap "Compare all variants" to see each flavour separately.`;
+    result.message =
+      'Multi-flavour pack — scores reflect all flavours in this listing. Expand below to compare.';
     result.confidence = 'medium';
   } else if (showHealth) {
     result.health = buildHealthScore(merged, additiveResult);

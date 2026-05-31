@@ -155,6 +155,13 @@ function scoreGalleryImage(alt, url) {
   const a = (alt || '').toLowerCase();
   const u = (url || '').toLowerCase();
   if (/nutrition|ingredient|label|facts|back|barcode|composition|allergen|per\s*100/i.test(a)) s += 10;
+  if (/cranberr|fruit\s*(?:&|and)\s*nut|intense|70\s*%?\s*dark|bournville/i.test(a)) s += 8;
+  const flavourHits = [
+    /cranberr/,
+    /fruit\s*(?:&|and)\s*nut/,
+    /intense|70\s*%?\s*dark/,
+  ].filter((re) => re.test(a)).length;
+  if (flavourHits >= 2) s += 14;
   if (a.length > 25) s += 2;
   if (/\.jpg|\.png|\.webp/.test(u)) s += 1;
   return s;
@@ -167,10 +174,18 @@ function resolveAmazonImageUrl(img) {
     try {
       const obj = JSON.parse(dynamic);
       const keys = Object.keys(obj).filter((k) => k.startsWith('http'));
-      if (keys.length) url = keys.sort((a, b) => b.length - a.length)[0];
+      if (keys.length) {
+        const jpgKeys = keys.filter((k) => /\.jpe?g(\?|$)/i.test(k));
+        const pool = jpgKeys.length ? jpgKeys : keys.filter((k) => !/\.webp(\?|$)/i.test(k));
+        const sorted = (pool.length ? pool : keys).sort((a, b) => b.length - a.length);
+        url = sorted[0];
+      }
     } catch {
       /* ignore */
     }
+  }
+  if (url && /\.webp(\?|$)/i.test(url)) {
+    url = url.replace(/\.webp(\?.*)?$/i, '.jpg$1');
   }
   return url && url.startsWith('http') ? url : '';
 }
@@ -183,7 +198,7 @@ function extractProductImages() {
     )
     .forEach((img) => {
       const url = resolveAmazonImageUrl(img);
-      if (!url || url.includes('sprite') || url.includes('gif')) return;
+      if (!url || url.includes('sprite') || url.includes('gif') || url.includes('.svg')) return;
       const alt = (img.alt || img.getAttribute('title') || '').trim();
       const prev = byUrl.get(url);
       if (!prev || scoreGalleryImage(alt, url) > scoreGalleryImage(prev.alt, url)) {
@@ -342,11 +357,10 @@ function displayScore(result) {
   if (!result) return { score: '?', band: 'loading', label: 'Analyzing…', icon: '…' };
   const isFood = result.productType === 'food' || result.productType === 'ambiguous';
   if (isFood && result.health) {
-    const n = result.variants?.length;
     return {
       score: String(result.health.total),
       band: scoreBand(result.health.total),
-      label: n >= 2 ? `Health avg (${n})` : 'Health',
+      label: 'Health',
       icon: '🍎',
     };
   }
