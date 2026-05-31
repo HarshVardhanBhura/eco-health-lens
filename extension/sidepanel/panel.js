@@ -338,7 +338,11 @@ function renderFlaggedIngredients(ingredients) {
 
   const paint = (list) => {
     ul.innerHTML = '';
+    const seen = new Set();
     for (const ing of list) {
+      const key = `${ing.text.toLowerCase()}|${(ing.reason || '').toLowerCase()}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       const li = document.createElement('li');
       const cls =
         ing.sentiment === 'good'
@@ -413,9 +417,18 @@ function render(result) {
   $('disclaimer').textContent =
     result.disclaimer ||
     'Informational only — not medical or environmental certification.';
-  $('sources').textContent = result.sources?.length
-    ? `Sources: ${result.sources.join(', ')}`
-    : '';
+  const sourceBits = [];
+  if (result.sources?.length) sourceBits.push(`Sources: ${result.sources.join(', ')}`);
+  const en = result.enrichment;
+  if (en) {
+    if (en.offMatched) sourceBits.push('Open Food Facts: matched');
+    else if (en.barcodesTried?.length)
+      sourceBits.push(`Open Food Facts: no match (${en.barcodesTried.length} barcode(s) tried)`);
+  }
+  if (en?.ocrRan) sourceBits.push(`Pack images OCR: ${en.ocrImageCount || 0} read`);
+  else if (en && en.nutritionSource === 'ingredient_estimate')
+    sourceBits.push('Pack images OCR: could not read label');
+  $('sources').textContent = sourceBits.join(' · ');
 
   if (result.health) {
     $('health-section').classList.remove('hidden');

@@ -3,7 +3,10 @@ import {
   extractBarcodeFromText,
   extractIngredientsFromOcr,
   normalizeOcrText,
+  nutritionFieldCount,
+  hasPackLabelSection,
 } from '../scoring/nutritionParse.js';
+import { sanitizeIngredientsText } from '../scoring/ingredients.js';
 import {
   collectAllNutritionBlocks,
   dedupeNutritionBlocks,
@@ -21,14 +24,37 @@ const FLAVOUR_ALT_RE = /cranberr|fruit\s*(?:&|and)\s*nut|intense|70\s*%?\s*dark|
  * Prefer full-resolution Amazon gallery URLs for OCR.
  * @param {string} url
  */
+/**
+ * @param {string} url
+ */
+function amazonImageIdFromUrl(url) {
+  const m = url?.match(/\/images\/I\/([A-Za-z0-9+_-]+)/i);
+  return m ? m[1].replace(/\._.*$/, '') : null;
+}
+
 function upgradeAmazonImageUrl(url) {
   if (!url) return url;
+
+  const id = amazonImageIdFromUrl(url);
+  if (id && /_SX\d+|_SY\d+|_CR,0,0,\d+/i.test(url)) {
+    const host = url.match(/^https?:\/\/[^/]+/)?.[0] || 'https://m.media-amazon.com';
+    return `${host}/images/I/${id}._SL1500_.jpg`;
+  }
+
   let u = url
     .replace(/\._AC_[A-Z0-9_]+_\./, '._AC_SL1500_.')
     .replace(/\._SX\d+_\./, '._SL1500_.')
-    .replace(/\._SY\d+_\./, '._SL1500_.')
-    .replace(/\._SL\d+_\./, '._SL1500_.');
+    .replace(/\._SY\d+_\./, '._SL1500_.');
+  if (/_SL\d+_/i.test(u) && !/_SL1[0-9]{3}/i.test(u)) {
+    u = u.replace(/\._SL\d+_\./, '._SL1500_.');
+  }
   if (/\.webp(\?|$)/i.test(u)) u = u.replace(/\.webp(\?.*)?$/i, '.jpg$1');
+
+  if (id && !/_SL1[0-9]{3}/i.test(u)) {
+    const host = u.match(/^https?:\/\/[^/]+/)?.[0] || 'https://m.media-amazon.com';
+    return `${host}/images/I/${id}._SL1500_.jpg`;
+  }
+
   return u;
 }
 
@@ -96,6 +122,17 @@ async function recognizeWithFallback(worker, buffer, url) {
   } finally {
     await worker.setParameters({ tessedit_pageseg_mode: '6' });
   }
+
+  if (text.trim().length < 120 || !/nutrition|energy|kcal|per\s*100/i.test(text)) {
+    try {
+      await worker.setParameters({ tessedit_pageseg_mode: '4' });
+      const table = await recognizeBufferSafe(worker, buffer, url);
+      if (table.trim().length > text.trim().length) text = table;
+    } finally {
+      await worker.setParameters({ tessedit_pageseg_mode: '6' });
+    }
+  }
+
   return text;
 }
 
@@ -103,16 +140,78 @@ async function recognizeWithFallback(worker, buffer, url) {
  * @param {Array<{ url: string, alt?: string }>} images
  * @returns {Promise<{ text: string, nutrition: object | null, barcode: string | null, ingredientsText: string, sources: string[], variants?: object[] } | null>}
  */
-export async function extractFromProductImages(images) {
-  if (!images?.length) return null;
+/**
+ * @param {Set<string>} barcodesFound
+ */
+function collectBarcodesFromText(text, barcodesFound) {
+  const b = extractBarcodeFromText(text);
+  if (b) barcodesFound.add(b);
+}
 
-  const ranked = [...images]
+/**
+ * @param {Set<string>} barcodesFound
+ */
+function pickBestBarcode(barcodesFound) {
+  const list = [...barcodesFound];
+  if (!list.length) return null;
+  const ean13 = list.filter((b) => b.length === 13);
+  return ean13[0] || list.sort((a, b) => b.length - a.length)[0];
+}
+
+/**
+ * @param {object} state
+ * @param {string} text
+ */
+function applyOcrText(state, text) {
+  state.combinedText += '\n' + text;
+
+  const blocks = collectAllNutritionBlocks(text);
+  for (const b of blocks) {
+    state.perImageBlocks.push(b);
+  }
+
+  const nutrition = parseBestNutritionBlock(text);
+  if (nutrition) {
+    const count = Object.keys(nutrition).filter((k) => k !== 'per').length;
+    if (count > state.bestCount) {
+      state.bestCount = count;
+      state.bestNutrition = nutrition;
+    }
+  }
+
+  collectBarcodesFromText(text, state.barcodesFound);
+  const ing = sanitizeIngredientsText(extractIngredientsFromOcr(text));
+  if (ing.length > state.ingredientsText.length) state.ingredientsText = ing;
+}
+
+/**
+ * @param {Array<{ url: string, alt?: string }>} images
+ * @param {{ selectedImageUrl?: string, imageBuffers?: Array<{ base64: string, mimeType?: string, alt?: string, url?: string }> }} [options]
+ */
+export async function extractFromProductImages(images, options = {}) {
+  const imageBuffers = options.imageBuffers || [];
+  let ranked = [...(images || [])]
     .filter((img) => img?.url?.startsWith('http'))
-    .map((img) => ({ ...img, url: upgradeAmazonImageUrl(img.url) }))
-    .sort((a, b) => scoreImage(b) - scoreImage(a))
+    .map((img) => ({ ...img, url: upgradeAmazonImageUrl(img.url) }));
+
+  const selected = options.selectedImageUrl
+    ? upgradeAmazonImageUrl(options.selectedImageUrl)
+    : null;
+  if (selected) {
+    const hit = ranked.find((i) => urlsMatch(i.url, selected));
+    if (hit && isLikelyNutritionImage(hit)) {
+      hit.priority = (hit.priority || 0) + 80;
+    }
+  }
+
+  ranked = ranked
+    .sort(
+      (a, b) =>
+        (b.priority || 0) + scoreImage(b) - ((a.priority || 0) + scoreImage(a))
+    )
     .slice(0, MAX_IMAGES);
 
-  if (!ranked.length) return null;
+  if (!ranked.length && !imageBuffers.length) return null;
 
   let createWorker;
   try {
@@ -127,19 +226,49 @@ export async function extractFromProductImages(images) {
     worker = await createWorker('eng');
     await worker.setParameters({ tessedit_pageseg_mode: '6' });
 
-    let combinedText = '';
-    let bestNutrition = null;
-    let bestCount = 0;
-    let barcode = null;
-    let ingredientsText = '';
-    /** @type {Array<object>} */
-    const perImageBlocks = [];
+    const state = {
+      combinedText: '',
+      bestNutrition: null,
+      bestCount: 0,
+      ingredientsText: '',
+      perImageBlocks: [],
+      barcodesFound: new Set(),
+    };
     let ocrAttempts = 0;
     let ocrSuccess = 0;
+    const bufferedUrls = new Set(
+      imageBuffers.map((b) => b.url).filter(Boolean)
+    );
+
+    for (const bufImg of imageBuffers) {
+      if (!bufImg?.base64) continue;
+      let buffer;
+      try {
+        buffer = Buffer.from(bufImg.base64, 'base64');
+      } catch {
+        continue;
+      }
+      const contentType = bufImg.mimeType || 'image/jpeg';
+      if (!isSupportedOcrImage(buffer, contentType)) continue;
+
+      ocrAttempts += 1;
+      const rawText = await recognizeWithFallback(
+        worker,
+        buffer,
+        bufImg.url || 'extension-buffer'
+      );
+      if (!rawText?.trim()) continue;
+
+      ocrSuccess += 1;
+      applyOcrText(state, normalizeOcrText(rawText));
+      if (nutritionFieldCount(state.bestNutrition) >= 4) break;
+    }
 
     for (const img of ranked) {
+      if (img.url && bufferedUrls.has(img.url)) continue;
+
       const altText = (img.alt || '').trim();
-      if (altText.length > 20) combinedText += '\n' + altText;
+      if (altText.length > 20) state.combinedText += '\n' + altText;
 
       const fetched = await fetchImageBuffer(img.url);
       if (!fetched) continue;
@@ -159,31 +288,25 @@ export async function extractFromProductImages(images) {
       if (!rawText?.trim()) continue;
 
       ocrSuccess += 1;
-      const text = normalizeOcrText(rawText);
-      combinedText += '\n' + text;
+      applyOcrText(state, normalizeOcrText(rawText));
 
-      const blocks = collectAllNutritionBlocks(text);
-      for (const b of blocks) {
-        perImageBlocks.push(b);
-      }
+      if (dedupeNutritionBlocks(state.perImageBlocks).length >= 3) break;
+      if (nutritionFieldCount(state.bestNutrition) >= 4) break;
+    }
 
-      if (dedupeNutritionBlocks(perImageBlocks).length >= 3) break;
+    let { combinedText, bestNutrition, bestCount, ingredientsText, perImageBlocks, barcodesFound } =
+      state;
 
-      const nutrition = parseBestNutritionBlock(text);
-      if (nutrition) {
-        const count = Object.keys(nutrition).filter((k) => k !== 'per').length;
-        if (count > bestCount) {
-          bestCount = count;
-          bestNutrition = nutrition;
-        }
-      }
-
-      if (!barcode) barcode = extractBarcodeFromText(text);
-      if (!ingredientsText || ingredientsText.length < 40) {
-        const ing = extractIngredientsFromOcr(text);
-        if (ing.length > ingredientsText.length) ingredientsText = ing;
+    if (!bestNutrition || bestCount < 3) {
+      const fromCombined = parseBestNutritionBlock(combinedText);
+      const combinedCount = nutritionFieldCount(fromCombined);
+      if (fromCombined && combinedCount > bestCount) {
+        bestNutrition = fromCombined;
+        bestCount = combinedCount;
       }
     }
+
+    const barcode = pickBestBarcode(barcodesFound);
 
     if (ocrAttempts > 0 && ocrSuccess === 0) {
       console.warn('[EcoHealth] OCR: no images could be read — using alt text only');
@@ -207,13 +330,22 @@ export async function extractFromProductImages(images) {
     }
     if (!barcode && barcodes.size === 1) barcode = [...barcodes][0];
 
+    const labelPackDetected =
+      hasPackLabelSection(combinedText) &&
+      (ingredientsText.length > 15 ||
+        nutritionFieldCount(bestNutrition) >= 2 ||
+        bestNutrition?.energy_kcal != null);
+
     return {
       text: combinedText,
       nutrition: bestNutrition,
       barcode,
+      barcodes: [...barcodesFound],
       ingredientsText,
       variants: variantBlocks.length >= 2 ? variantBlocks : undefined,
       sources: ocrSuccess > 0 ? ['product_image_ocr'] : ['product_image_alt'],
+      ocrImageCount: ocrSuccess,
+      labelPackDetected,
     };
   } catch (e) {
     console.warn('[EcoHealth] OCR pipeline failed:', e.message || e);
@@ -232,11 +364,34 @@ export async function extractFromProductImages(images) {
 /**
  * @param {{ url: string, alt?: string }} img
  */
+function urlsMatch(a, b) {
+  if (!a || !b) return false;
+  const na = a.replace(/\?.*$/, '').replace(/\.webp$/i, '.jpg');
+  const nb = b.replace(/\?.*$/, '').replace(/\.webp$/i, '.jpg');
+  return na === nb || na.includes(nb.slice(-40)) || nb.includes(na.slice(-40));
+}
+
+/**
+ * @param {{ alt?: string, url?: string }} img
+ */
+function isLikelyNutritionImage(img) {
+  const alt = (img.alt || '').toLowerCase();
+  const url = (img.url || '').toLowerCase();
+  return (
+    NUTRITION_ALT_RE.test(alt) ||
+    /nutrition\s*information|per\s*100|ingredient|barcode|back\s*of/i.test(alt) ||
+    /nutrition|ingredient|label|back/.test(url)
+  );
+}
+
 function scoreImage(img) {
   let s = 0;
   const alt = (img.alt || '').toLowerCase();
   const url = (img.url || '').toLowerCase();
   if (NUTRITION_ALT_RE.test(alt)) s += 10;
+  if (/nutrition(?:al)?\s*information|per\s*100\s*g|per\s*100g|net\s*quantity|fssai/i.test(alt))
+    s += 12;
+  if (/masala|instant\s+noodles|back\s*of|barcode/i.test(alt)) s += 6;
   if (FLAVOUR_ALT_RE.test(alt)) s += 8;
   const flavourHits = [
     /cranberr/,

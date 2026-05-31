@@ -4,7 +4,7 @@
 
 import { API_BASE_URL } from '../shared/config.js';
 
-const CACHE_PREFIX = 'analysis:v8:';
+const CACHE_PREFIX = 'analysis:v13:';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** @type {number | null} Tab that owns the open side panel */
@@ -188,13 +188,15 @@ async function fetchAnalysis(payload) {
  * @param {import('../shared/types.js').ProductPayload} payload
  * @param {number | undefined} tabId
  */
-async function analyzeProduct(payload, tabId) {
-  const cached = await getCached(payload.asin);
-  if (cached) {
-    if (tabId != null) {
-      await setTabAnalysis(tabId, { asin: payload.asin, result: cached, payload });
+async function analyzeProduct(payload, tabId, forceRefresh = false) {
+  if (!forceRefresh) {
+    const cached = await getCached(payload.asin);
+    if (cached) {
+      if (tabId != null) {
+        await setTabAnalysis(tabId, { asin: payload.asin, result: cached, payload });
+      }
+      return cached;
     }
-    return cached;
   }
 
   const result = await fetchAnalysis(payload);
@@ -232,7 +234,7 @@ function openSidePanelNow(tabId) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'ANALYZE_PRODUCT') {
     const tabId = sender.tab?.id;
-    analyzeProduct(message.payload, tabId)
+    analyzeProduct(message.payload, tabId, Boolean(message.forceRefresh))
       .then((result) => sendResponse({ ok: true, result }))
       .catch((err) => {
         console.error('[EcoHealth] analyze failed', err);

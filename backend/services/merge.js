@@ -1,5 +1,10 @@
 import { inferNutritionFromIngredients } from '../scoring/ingredientInference.js';
-import { parseBestNutritionBlock } from '../scoring/nutritionParse.js';
+import {
+  parseBestNutritionBlock,
+  nutritionFieldCount,
+  hasPackLabelSection,
+} from '../scoring/nutritionParse.js';
+import { sanitizeIngredientsText } from '../scoring/ingredients.js';
 import { extractFromProductImages } from './imageOcr.js';
 
 /**
@@ -19,7 +24,7 @@ export async function mergeProductData(page, offProduct, imageData = null) {
     title: page.title,
     category: page.category,
     barcode: page.barcode,
-    ingredientsText: page.ingredientsText || '',
+    ingredientsText: sanitizeIngredientsText(page.ingredientsText || ''),
     materialsText: page.materialsText || '',
     packWeightG: page.packWeightG,
     nutrition: page.nutrition ? { ...page.nutrition } : undefined,
@@ -31,7 +36,7 @@ export async function mergeProductData(page, offProduct, imageData = null) {
   }
 
   if (!offProduct) {
-    applyIngredientInference(merged, sources);
+    applyIngredientInference(merged, sources, imageData);
     return { merged, sources };
   }
 
@@ -68,7 +73,7 @@ export async function mergeProductData(page, offProduct, imageData = null) {
   if (hasOffNutrients) {
     merged.nutritionInferred = false;
   } else {
-    applyIngredientInference(merged, sources);
+    applyIngredientInference(merged, sources, imageData);
   }
 
   return { merged, sources };
@@ -92,20 +97,82 @@ function applyImageExtraction(merged, sources, imageData) {
   }
 
   if (imageData.barcode && !merged.barcode) merged.barcode = imageData.barcode;
-
-  if (imageData.ingredientsText?.length > (merged.ingredientsText?.length || 0)) {
-    merged.ingredientsText = imageData.ingredientsText;
+  if (!merged.barcode && imageData.barcodes?.length) {
+    merged.barcode = imageData.barcodes.find((b) => b.length === 13) || imageData.barcodes[0];
   }
 
-  const imgNutrition = imageData.nutrition || parseBestNutritionBlock(imageData.text || '');
-  if (imgNutrition && !hasLabelNutrition(merged.nutrition)) {
+  const ocrIngredients = sanitizeIngredientsText(imageData.ingredientsText || '');
+  if (ocrIngredients.length > 20) {
+    const pageLen = merged.ingredientsText?.length || 0;
+    const pageHasBoilerplate = /legal disclaimer|warnings?\b|directions before/i.test(
+      merged.ingredientsText || ''
+    );
+    if (
+      ocrIngredients.length > pageLen ||
+      pageHasBoilerplate ||
+      !merged.ingredientsText
+    ) {
+      merged.ingredientsText = ocrIngredients;
+    }
+  }
+
+  const imgNutrition =
+    imageData.nutrition || parseBestNutritionBlock(imageData.text || '');
+  const imgFields = nutritionFieldCount(imgNutrition);
+  const mergedFields = nutritionFieldCount(merged.nutrition);
+
+  const labelText = imageData.text || '';
+  const fromLabelTable =
+    imgNutrition?.energy_kcal != null && hasPackLabelSection(labelText);
+
+  if (
+    imgNutrition &&
+    (fromLabelTable ||
+      (imgFields >= 2 &&
+        (merged.nutritionInferred || !hasLabelNutrition(merged.nutrition) || imgFields > mergedFields)))
+  ) {
     merged.nutrition = { ...imgNutrition, _fromImage: true };
     merged.nutritionInferred = false;
   }
+
+  if (
+    imageData.labelPackDetected ||
+    (imageData.ocrImageCount > 0 && hasPackLabelSection(labelText))
+  ) {
+    merged.packLabelRead = true;
+  }
 }
 
-function applyIngredientInference(merged, sources) {
-  if (hasLabelNutrition(merged.nutrition)) return;
+/**
+ * @param {object} merged
+ * @param {Awaited<ReturnType<typeof extractFromProductImages>> | null} imageData
+ */
+function shouldSkipIngredientInference(merged, imageData) {
+  if (hasLabelNutrition(merged.nutrition)) return true;
+  if (merged.packLabelRead) return true;
+  if (!imageData) return false;
+
+  const text = imageData.text || '';
+  const parsed =
+    imageData.nutrition || parseBestNutritionBlock(text);
+
+  if (imageData.ocrImageCount > 0 && imageData.sources?.includes('product_image_ocr')) {
+    if (hasPackLabelSection(text)) return true;
+    if (parsed?.energy_kcal >= 200 && parsed?.energy_kcal <= 700) return true;
+    if ((imageData.ingredientsText || '').length > 15) return true;
+    if (/noodles\s*:|tastemaker|refined wheat flour/i.test(text)) return true;
+  }
+
+  if (!hasPackLabelSection(text)) return false;
+
+  const ocrIng = (imageData.ingredientsText || '').length > 25;
+  const ocrNut = nutritionFieldCount(parsed) >= 2;
+
+  return ocrIng || ocrNut;
+}
+
+function applyIngredientInference(merged, sources, imageData = null) {
+  if (shouldSkipIngredientInference(merged, imageData)) return;
   if (!merged.ingredientsText) return;
   const inferred = inferNutritionFromIngredients(merged.ingredientsText, merged.packWeightG);
   if (!inferred) return;

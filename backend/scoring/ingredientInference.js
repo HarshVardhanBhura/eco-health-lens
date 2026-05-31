@@ -1,3 +1,5 @@
+import { sanitizeIngredientsText } from './ingredients.js';
+
 /**
  * Estimate per-100g nutrition from a detailed ingredient list (with % where listed).
  * Used when Amazon does not expose a parseable nutrition table.
@@ -7,7 +9,7 @@
  * @param {string} text
  */
 export function hasRichIngredientList(text) {
-  const t = (text || '').trim();
+  const t = sanitizeIngredientsText(text || '');
   if (t.length < 50) return false;
   const parts = t.split(/[,;]/).map((p) => p.trim()).filter((p) => p.length > 2);
   if (parts.length < 4) return false;
@@ -21,7 +23,7 @@ export function hasRichIngredientList(text) {
  * @returns {Array<{ name: string, percent: number | null }>}
  */
 export function parseIngredientParts(ingredientsText) {
-  const main = ingredientsText.split(/allergen/i)[0].trim();
+  const main = sanitizeIngredientsText(ingredientsText).split(/allergen/i)[0].trim();
   const parts = main.split(/[,;]/).map((p) => p.trim()).filter(Boolean);
   return parts.map((part) => {
     const pct = part.match(/\(\s*(\d+(?:\.\d+)?)\s*%\s*\*?\s*\)/i);

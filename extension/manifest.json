@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "EcoHealth Lens",
-  "version": "1.2.4",
+  "version": "1.2.9",
   "description": "Eco and health scores for Amazon India products — informational only.",
   "permissions": [
     "storage",

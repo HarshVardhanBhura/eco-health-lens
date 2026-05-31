@@ -4,6 +4,24 @@ const OFF_BASE = 'https://world.openfoodfacts.org/api/v2/product';
  * @param {string} barcode
  * @returns {Promise<object | null>}
  */
+/**
+ * Try barcodes in order (EAN-13 first) until OFF returns a product.
+ * @param {string[]} barcodes
+ */
+export async function fetchFirstByBarcodes(barcodes) {
+  const unique = [...new Set((barcodes || []).filter((b) => /^\d{8,14}$/.test(b)))]
+    .sort((a, b) => {
+      if (a.length === 13 && b.length !== 13) return -1;
+      if (b.length === 13 && a.length !== 13) return 1;
+      return b.length - a.length;
+    });
+  for (const barcode of unique) {
+    const product = await fetchByBarcode(barcode);
+    if (product) return { product, barcode };
+  }
+  return null;
+}
+
 export async function fetchByBarcode(barcode) {
   if (!barcode || !/^\d{8,14}$/.test(barcode)) return null;
 

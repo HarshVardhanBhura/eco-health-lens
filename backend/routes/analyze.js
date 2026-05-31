@@ -1,4 +1,4 @@
-import { fetchByBarcode } from '../services/openFoodFacts.js';
+import { fetchFirstByBarcodes } from '../services/openFoodFacts.js';
 import { extractFromProductImages } from '../services/imageOcr.js';
 import { mergeProductData } from '../services/merge.js';
 import { detectProductType } from '../scoring/detectProductType.js';
@@ -60,15 +60,21 @@ export async function analyzeProduct(payload) {
   if (hit) return hit;
 
   let imageData = null;
-  if (payload.productImages?.length) {
-    imageData = await extractFromProductImages(payload.productImages);
+  if (payload.productImages?.length || payload.productImageBuffers?.length) {
+    imageData = await extractFromProductImages(payload.productImages || [], {
+      selectedImageUrl: payload.selectedImageUrl,
+      imageBuffers: payload.productImageBuffers,
+    });
   }
 
-  const barcodeForOff = payload.barcode || imageData?.barcode || null;
-  let offProduct = null;
-  if (barcodeForOff) {
-    offProduct = await fetchByBarcode(barcodeForOff);
-  }
+  const barcodesToTry = [
+    payload.barcode,
+    imageData?.barcode,
+    ...(imageData?.barcodes || []),
+  ].filter(Boolean);
+
+  const offHit = barcodesToTry.length ? await fetchFirstByBarcodes(barcodesToTry) : null;
+  const offProduct = offHit?.product || null;
 
   const { merged, sources } = await mergeProductData(payload, offProduct, imageData);
   const productType = detectProductType(merged);
@@ -126,9 +132,16 @@ export async function analyzeProduct(payload) {
   if (productType === 'non_food' && result.eco?.insufficientData) {
     result.message =
       'No reliable eco rating — material or fabric composition was not found on this listing (e.g. Material / Fabric field).';
+  } else if (productType === 'food' && sources.includes('open_food_facts') && !result.variants?.length) {
+    result.message = offHit?.barcode
+      ? `Nutrition from Open Food Facts (barcode ${offHit.barcode}).`
+      : 'Nutrition from Open Food Facts.';
   } else if (productType === 'food' && merged.nutrition?._fromImage && !result.variants?.length) {
     result.message =
-      'Nutrition and barcode read from product packaging images (OCR).';
+      'Nutrition read from product packaging images (pack label OCR).';
+  } else if (productType === 'food' && merged.packLabelRead && !result.variants?.length) {
+    result.message =
+      'Pack label read from product images (ingredients from label). Open Food Facts had no barcode match.';
   } else if (productType === 'food' && merged.nutritionInferred && !result.variants?.length) {
     result.message =
       'Macros estimated from ingredient list and pack weight — not from an official nutrition label.';
@@ -148,6 +161,26 @@ export async function analyzeProduct(payload) {
       result.message ||
       'No nutrition table found — health score uses ingredients and heuristics only.';
   }
+
+  result.enrichment = {
+    barcode: merged.barcode || offHit?.barcode || null,
+    barcodesTried: [...new Set(barcodesToTry)],
+    offMatched: Boolean(offProduct),
+    ocrRan: Boolean(imageData?.sources?.includes('product_image_ocr')),
+    ocrImageCount: imageData?.ocrImageCount ?? 0,
+    nutritionSource: sources.includes('open_food_facts')
+      ? 'open_food_facts'
+      : merged.nutrition?._fromImage
+        ? 'label_ocr'
+        : merged.packLabelRead
+          ? 'pack_label_partial'
+          : merged.nutritionInferred
+            ? 'ingredient_estimate'
+            : merged.nutrition
+              ? 'page'
+              : 'none',
+    packLabelRead: Boolean(merged.packLabelRead),
+  };
 
   setCached(key, result);
   return result;

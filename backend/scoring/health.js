@@ -141,6 +141,11 @@ export function buildHealthRationale(merged, additiveResult, components) {
       type: 'neutral',
       text: 'Score uses nutrition read from product packaging images.',
     });
+  } else if (merged.packLabelRead) {
+    rationale.push({
+      type: 'neutral',
+      text: 'Pack label detected in product images — ingredients from label; nutrition table partially used.',
+    });
   }
 
   const macroItems = components.macros?.items || [];
@@ -173,10 +178,7 @@ export function buildHealthRationale(merged, additiveResult, components) {
 
   const flags = components.additives?.flags || [];
   if (flags.length) {
-    const names = flags
-      .slice(0, 3)
-      .map((f) => f.name)
-      .join(', ');
+    const names = [...new Set(flags.slice(0, 3).map((f) => f.name))].join(', ');
     rationale.push({
       type: 'negative',
       text: `Additives flagged: ${names}`,

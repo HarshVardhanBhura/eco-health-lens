@@ -80,9 +80,9 @@
     },
     {
       "id": "palm_oil",
-      "aliases": ["palm oil", "palm kernel oil"],
+      "aliases": ["palm oil", "palm kernel oil", "palmolein"],
       "severity": "medium",
-      "reason": "Palm oil — deforestation concerns"
+      "reason": "Palm oil — high saturated fat (~50%); limit if watching heart health"
     },
     {
       "id": "artificial_flavour",
