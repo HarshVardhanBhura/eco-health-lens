@@ -428,6 +428,26 @@ function render(result) {
   if (en?.ocrRan) sourceBits.push(`Pack images OCR: ${en.ocrImageCount || 0} read`);
   else if (en && en.nutritionSource === 'ingredient_estimate')
     sourceBits.push('Pack images OCR: could not read label');
+  if (en?.nutritionSource === 'label_ocr' && en.parsedNutrition) {
+    const p = en.parsedNutrition;
+    const bits = [];
+    if (p.energy_kcal != null) bits.push(`${p.energy_kcal} kcal`);
+    if (p.sugar_g != null) bits.push(`${p.sugar_g}g sugar`);
+    if (bits.length) sourceBits.push(`Label nutrition: ${bits.join(', ')}`);
+  }
+  if (en?.bestNutritionImageId) {
+    sourceBits.push(`From image: ${en.bestNutritionImageId}`);
+  }
+  if (en?.autoNutritionOcr && en?.labelTableDetected !== false) {
+    sourceBits.push('Nutrition: auto-read from gallery label image');
+  }
+  if (en?.labelTableDetected === false && en?.nutritionSource === 'label_ocr') {
+    sourceBits.push('Tip: select the nutrition table image in the gallery');
+  }
+  const clarity = en?.imageClarity?.[0];
+  if (clarity?.width) {
+    sourceBits.push(`Image: ${clarity.width}×${clarity.height}px (${clarity.rating || '?'})`);
+  }
   $('sources').textContent = sourceBits.join(' · ');
 
   if (result.health) {

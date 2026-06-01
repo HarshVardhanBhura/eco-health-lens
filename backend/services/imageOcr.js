@@ -5,6 +5,10 @@ import {
   normalizeOcrText,
   nutritionFieldCount,
   hasPackLabelSection,
+  hasFullNutritionTable,
+  isConfidentLabelNutrition,
+  refineEnergyFromLabel,
+  sanitizeNutritionPer100g,
 } from '../scoring/nutritionParse.js';
 import { sanitizeIngredientsText } from '../scoring/ingredients.js';
 import {
@@ -12,6 +16,7 @@ import {
   dedupeNutritionBlocks,
   parseVariantBlocks,
 } from '../scoring/variantParse.js';
+import { recognizeLabelImage, scoreLabelOcrText } from './labelOcr.js';
 
 const NUTRITION_ALT_RE =
   /nutrition|ingredient|label|facts|back\s*of|pack|barcode|composition|allergen|per\s*100/i;
@@ -111,23 +116,26 @@ async function recognizeBufferSafe(worker, buffer, url) {
  * @param {Buffer} buffer
  * @param {string} url
  */
-async function recognizeWithFallback(worker, buffer, url) {
+/**
+ * @param {import('tesseract.js').Worker} worker
+ * @param {Buffer} buffer
+ * @param {string} url
+ * @param {{ labelImage?: boolean }} [options]
+ */
+async function recognizeWithFallback(worker, buffer, url, options = {}) {
+  const labelImage = Boolean(options.labelImage);
+  if (labelImage) {
+    return recognizeLabelImage(worker, buffer, url);
+  }
+
   let text = await recognizeBufferSafe(worker, buffer, url);
   if (text.trim().length >= 80) return text;
 
-  try {
-    await worker.setParameters({ tessedit_pageseg_mode: '3' });
-    const alt = await recognizeBufferSafe(worker, buffer, url);
-    if (alt.trim().length > text.trim().length) text = alt;
-  } finally {
-    await worker.setParameters({ tessedit_pageseg_mode: '6' });
-  }
-
-  if (text.trim().length < 120 || !/nutrition|energy|kcal|per\s*100/i.test(text)) {
+  for (const mode of ['3', '4']) {
     try {
-      await worker.setParameters({ tessedit_pageseg_mode: '4' });
-      const table = await recognizeBufferSafe(worker, buffer, url);
-      if (table.trim().length > text.trim().length) text = table;
+      await worker.setParameters({ tessedit_pageseg_mode: mode });
+      const alt = await recognizeBufferSafe(worker, buffer, url);
+      if (alt.trim().length > text.trim().length) text = alt;
     } finally {
       await worker.setParameters({ tessedit_pageseg_mode: '6' });
     }
@@ -160,9 +168,79 @@ function pickBestBarcode(barcodesFound) {
 
 /**
  * @param {object} state
+ * @param {string | null} selectedImageId
+ * @param {boolean} selectedOnly
+ */
+function pickNutritionWinner(state, selectedImageId, selectedOnly) {
+  const { perImageNutrition, combinedText } = state;
+
+  if (selectedImageId) {
+    const fromSelected = perImageNutrition
+      .filter((p) => p.imageId === selectedImageId && p.nutrition)
+      .sort(
+        (a, b) =>
+          (b.confident ? 10 : 0) +
+          b.count -
+          ((a.confident ? 10 : 0) + a.count)
+      )[0];
+    if (fromSelected?.nutrition && hasPackLabelSection(fromSelected.text || '')) {
+      const n = refineEnergyFromLabel(
+        fromSelected.text || combinedText,
+        sanitizeNutritionPer100g(fromSelected.nutrition)
+      );
+      const ok =
+        n &&
+        (isConfidentLabelNutrition(n, fromSelected.text || '') ||
+          ((fromSelected.ocrScore || 0) >= 55 && nutritionFieldCount(n) >= 2));
+      if (ok) {
+        return {
+          nutrition: n,
+          count: nutritionFieldCount(n),
+          imageId: selectedImageId,
+        };
+      }
+    }
+  }
+
+  if (selectedOnly && selectedImageId) return null;
+
+  const labelHits = perImageNutrition
+    .filter((p) => hasPackLabelSection(p.text || '') && (p.confident || p.labelChunk))
+    .sort((a, b) => {
+      const scoreA =
+        (a.ocrScore || 0) +
+        (hasFullNutritionTable(a.text || '') ? 50 : 0) +
+        (a.confident ? 20 : 0) +
+        a.count +
+        (a.nutrition?.energy_kcal >= 360 && a.nutrition?.energy_kcal <= 430 ? 8 : 0);
+      const scoreB =
+        (b.ocrScore || 0) +
+        (hasFullNutritionTable(b.text || '') ? 50 : 0) +
+        (b.confident ? 20 : 0) +
+        b.count +
+        (b.nutrition?.energy_kcal >= 360 && b.nutrition?.energy_kcal <= 430 ? 8 : 0);
+      return scoreB - scoreA;
+    });
+  if (labelHits.length && labelHits[0].nutrition) {
+    const top = labelHits[0];
+    const n = refineEnergyFromLabel(top.text || combinedText, sanitizeNutritionPer100g(top.nutrition));
+    const ok =
+      n &&
+      (isConfidentLabelNutrition(n, top.text || '') ||
+        ((top.ocrScore || 0) >= 55 && nutritionFieldCount(n) >= 2));
+    if (ok) {
+      return { nutrition: n, count: nutritionFieldCount(n), imageId: top.imageId };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * @param {object} state
  * @param {string} text
  */
-function applyOcrText(state, text) {
+function applyOcrText(state, text, imageId = null, options = {}) {
   state.combinedText += '\n' + text;
 
   const blocks = collectAllNutritionBlocks(text);
@@ -171,12 +249,39 @@ function applyOcrText(state, text) {
   }
 
   const nutrition = parseBestNutritionBlock(text);
-  if (nutrition) {
-    const count = Object.keys(nutrition).filter((k) => k !== 'per').length;
-    if (count > state.bestCount) {
-      state.bestCount = count;
-      state.bestNutrition = nutrition;
-    }
+  const count = nutritionFieldCount(nutrition);
+  const labelChunk = hasPackLabelSection(text);
+  const labelScore = scoreLabelOcrText(text);
+
+  if (nutrition && count > 0 && labelChunk) {
+    state.perImageNutrition.push({
+      nutrition: labelScore.nutrition || nutrition,
+      count: nutritionFieldCount(labelScore.nutrition || nutrition),
+      imageId,
+      text,
+      labelChunk,
+      confident: labelScore.confident || isConfidentLabelNutrition(labelScore.nutrition || nutrition, text),
+      ocrScore: labelScore.score,
+    });
+  }
+
+  const score =
+    labelScore.score ||
+    count + (labelChunk ? 3 : 0) + (options.nutritionImage ? 4 : 0) + (nutrition?.energy_kcal ? 2 : 0);
+  const bestScore =
+    (state.bestOcrScore || 0) +
+    state.bestCount +
+    (state.bestFromLabelChunk ? 3 : 0) +
+    (state.bestNutritionImage ? 4 : 0) +
+    (state.bestNutrition?.energy_kcal ? 2 : 0);
+
+  if (nutrition && labelChunk && score > bestScore) {
+    state.bestNutrition = labelScore.nutrition || nutrition;
+    state.bestCount = nutritionFieldCount(state.bestNutrition);
+    state.bestNutritionImageId = imageId;
+    state.bestFromLabelChunk = labelChunk;
+    state.bestNutritionImage = Boolean(options.nutritionImage);
+    state.bestOcrScore = labelScore.score;
   }
 
   collectBarcodesFromText(text, state.barcodesFound);
@@ -189,7 +294,21 @@ function applyOcrText(state, text) {
  * @param {{ selectedImageUrl?: string, imageBuffers?: Array<{ base64: string, mimeType?: string, alt?: string, url?: string }> }} [options]
  */
 export async function extractFromProductImages(images, options = {}) {
-  const imageBuffers = options.imageBuffers || [];
+  let imageBuffers = options.imageBuffers || [];
+  const selectedImageId = amazonImageIdFromUrl(options.selectedImageUrl || '');
+  const ocrSelectedOnly = options.ocrSelectedOnly === true;
+
+  if (ocrSelectedOnly && selectedImageId) {
+    const filtered = imageBuffers.filter(
+      (b) => amazonImageIdFromUrl(b.url || '') === selectedImageId
+    );
+    if (filtered.length) imageBuffers = filtered;
+  }
+
+  imageBuffers = [...imageBuffers].sort(
+    (a, b) => (b.nutritionImage ? 1 : 0) - (a.nutritionImage ? 1 : 0)
+  );
+
   let ranked = [...(images || [])]
     .filter((img) => img?.url?.startsWith('http'))
     .map((img) => ({ ...img, url: upgradeAmazonImageUrl(img.url) }));
@@ -199,9 +318,8 @@ export async function extractFromProductImages(images, options = {}) {
     : null;
   if (selected) {
     const hit = ranked.find((i) => urlsMatch(i.url, selected));
-    if (hit && isLikelyNutritionImage(hit)) {
-      hit.priority = (hit.priority || 0) + 80;
-    }
+    if (hit) hit.priority = (hit.priority || 0) + 100;
+    else ranked.unshift({ url: selected, alt: '', priority: 100 });
   }
 
   ranked = ranked
@@ -230,8 +348,13 @@ export async function extractFromProductImages(images, options = {}) {
       combinedText: '',
       bestNutrition: null,
       bestCount: 0,
+      bestNutritionImageId: null,
+      bestFromLabelChunk: false,
+      bestNutritionImage: false,
+      bestOcrScore: 0,
       ingredientsText: '',
       perImageBlocks: [],
+      perImageNutrition: [],
       barcodesFound: new Set(),
     };
     let ocrAttempts = 0;
@@ -251,17 +374,31 @@ export async function extractFromProductImages(images, options = {}) {
       const contentType = bufImg.mimeType || 'image/jpeg';
       if (!isSupportedOcrImage(buffer, contentType)) continue;
 
+      const labelImage = Boolean(bufImg.nutritionImage);
       ocrAttempts += 1;
       const rawText = await recognizeWithFallback(
         worker,
         buffer,
-        bufImg.url || 'extension-buffer'
+        bufImg.url || 'extension-buffer',
+        { labelImage }
       );
       if (!rawText?.trim()) continue;
 
       ocrSuccess += 1;
-      applyOcrText(state, normalizeOcrText(rawText));
-      if (nutritionFieldCount(state.bestNutrition) >= 4) break;
+      applyOcrText(
+        state,
+        normalizeOcrText(rawText),
+        amazonImageIdFromUrl(bufImg.url || ''),
+        { nutritionImage: labelImage }
+      );
+      const strongLabel = state.perImageNutrition.find(
+        (p) =>
+          p.confident &&
+          (p.ocrScore || 0) >= 80 &&
+          p.nutrition?.energy_kcal >= 360 &&
+          p.nutrition?.energy_kcal <= 495
+      );
+      if (strongLabel) break;
     }
 
     for (const img of ranked) {
@@ -283,27 +420,59 @@ export async function extractFromProductImages(images, options = {}) {
         continue;
       }
 
+      const labelImage = isLikelyNutritionImage(img);
       ocrAttempts += 1;
-      const rawText = await recognizeWithFallback(worker, buffer, img.url);
+      const rawText = await recognizeWithFallback(worker, buffer, img.url, { labelImage });
       if (!rawText?.trim()) continue;
 
       ocrSuccess += 1;
-      applyOcrText(state, normalizeOcrText(rawText));
+      applyOcrText(state, normalizeOcrText(rawText), amazonImageIdFromUrl(img.url), {
+        nutritionImage: labelImage,
+      });
 
       if (dedupeNutritionBlocks(state.perImageBlocks).length >= 3) break;
-      if (nutritionFieldCount(state.bestNutrition) >= 4) break;
+      if (
+        nutritionFieldCount(state.bestNutrition) >= 4 &&
+        isConfidentLabelNutrition(state.bestNutrition, state.combinedText)
+      ) {
+        break;
+      }
     }
 
     let { combinedText, bestNutrition, bestCount, ingredientsText, perImageBlocks, barcodesFound } =
       state;
 
-    if (!bestNutrition || bestCount < 3) {
-      const fromCombined = parseBestNutritionBlock(combinedText);
-      const combinedCount = nutritionFieldCount(fromCombined);
-      if (fromCombined && combinedCount > bestCount) {
-        bestNutrition = fromCombined;
-        bestCount = combinedCount;
+    const winner = pickNutritionWinner(state, selectedImageId, ocrSelectedOnly);
+    if (winner) {
+      bestNutrition = winner.nutrition;
+      bestCount = winner.count;
+      state.bestNutritionImageId = winner.imageId;
+    } else if (!ocrSelectedOnly) {
+      if (
+        (!bestNutrition || bestCount < 3) &&
+        hasPackLabelSection(combinedText)
+      ) {
+        const fromCombined = refineEnergyFromLabel(
+          combinedText,
+          sanitizeNutritionPer100g(parseBestNutritionBlock(combinedText))
+        );
+        const combinedCount = nutritionFieldCount(fromCombined);
+        if (
+          fromCombined &&
+          isConfidentLabelNutrition(fromCombined, combinedText) &&
+          combinedCount > bestCount
+        ) {
+          bestNutrition = fromCombined;
+          bestCount = combinedCount;
+        }
       }
+    } else if (bestNutrition) {
+      const labelText =
+        (ocrSelectedOnly &&
+          state.perImageNutrition.find((p) => p.imageId === state.bestNutritionImageId)?.text) ||
+        combinedText;
+      bestNutrition = refineEnergyFromLabel(labelText, sanitizeNutritionPer100g(bestNutrition));
+      bestCount = nutritionFieldCount(bestNutrition);
     }
 
     const barcode = pickBestBarcode(barcodesFound);
@@ -346,6 +515,9 @@ export async function extractFromProductImages(images, options = {}) {
       sources: ocrSuccess > 0 ? ['product_image_ocr'] : ['product_image_alt'],
       ocrImageCount: ocrSuccess,
       labelPackDetected,
+      bestNutritionImageId: state.bestNutritionImageId,
+      ocrParsedFields: nutritionFieldCount(bestNutrition),
+      nutritionConfident: isConfidentLabelNutrition(bestNutrition, combinedText),
     };
   } catch (e) {
     console.warn('[EcoHealth] OCR pipeline failed:', e.message || e);

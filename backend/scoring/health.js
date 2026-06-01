@@ -1,3 +1,5 @@
+import { isConfidentLabelNutrition, sanitizeNutritionPer100g } from './nutritionParse.js';
+
 const DAILY_REF = {
   protein_g: 50,
   carbs_g: 275,
@@ -42,9 +44,11 @@ function macroStatus(pct, direction) {
  * @param {Record<string, number | string>} nutrition
  */
 export function scoreMacros(nutrition) {
-  if (!nutrition || Object.keys(nutrition).length <= 1) {
+  const safe = sanitizeNutritionPer100g(nutrition);
+  if (!safe || Object.keys(safe).length <= 1) {
     return { score: 50, items: [] };
   }
+  nutrition = safe;
 
   const defs = [
     { name: 'Energy', key: 'energy_kcal', ref: 2000, dir: 'lower_better', unit: 'kcal' },
@@ -136,7 +140,10 @@ export function buildHealthRationale(merged, additiveResult, components) {
       type: 'neutral',
       text: 'Nutrition estimated from ingredients — not from an official pack label.',
     });
-  } else if (merged.nutrition?._fromImage) {
+  } else if (
+    merged.nutrition?._fromImage ||
+    isConfidentLabelNutrition(merged.nutrition, '')
+  ) {
     rationale.push({
       type: 'neutral',
       text: 'Score uses nutrition read from product packaging images.',

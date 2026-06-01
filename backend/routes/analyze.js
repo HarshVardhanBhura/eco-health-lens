@@ -8,6 +8,12 @@ import { buildEcoScore } from '../scoring/eco.js';
 import { cacheKey, getCached, setCached } from '../services/cache.js';
 import { hasRichIngredientList } from '../scoring/ingredientInference.js';
 import { buildMultiVariantAnalysis } from '../scoring/variants.js';
+import {
+  isConfidentLabelNutrition,
+  nutritionFieldCount,
+  hasPackLabelSection,
+  hasFullNutritionTable,
+} from '../scoring/nutritionParse.js';
 
 const DISCLAIMER =
   'Informational only — not medical advice, not environmental certification, not affiliated with Amazon.';
@@ -64,6 +70,8 @@ export async function analyzeProduct(payload) {
     imageData = await extractFromProductImages(payload.productImages || [], {
       selectedImageUrl: payload.selectedImageUrl,
       imageBuffers: payload.productImageBuffers,
+      ocrSelectedOnly: payload.ocrSelectedOnly === true,
+      autoNutritionOcr: payload.autoNutritionOcr === true,
     });
   }
 
@@ -136,7 +144,12 @@ export async function analyzeProduct(payload) {
     result.message = offHit?.barcode
       ? `Nutrition from Open Food Facts (barcode ${offHit.barcode}).`
       : 'Nutrition from Open Food Facts.';
-  } else if (productType === 'food' && merged.nutrition?._fromImage && !result.variants?.length) {
+  } else if (
+    productType === 'food' &&
+    (merged.nutrition?._fromImage ||
+      isConfidentLabelNutrition(merged.nutrition, imageData?.text || '')) &&
+    !result.variants?.length
+  ) {
     result.message =
       'Nutrition read from product packaging images (pack label OCR).';
   } else if (productType === 'food' && merged.packLabelRead && !result.variants?.length) {
@@ -162,15 +175,28 @@ export async function analyzeProduct(payload) {
       'No nutrition table found — health score uses ingredients and heuristics only.';
   }
 
+  const labelNutritionConfident =
+    Boolean(merged.nutrition?._fromImage) ||
+    isConfidentLabelNutrition(merged.nutrition, imageData?.text || '');
+
   result.enrichment = {
     barcode: merged.barcode || offHit?.barcode || null,
     barcodesTried: [...new Set(barcodesToTry)],
     offMatched: Boolean(offProduct),
     ocrRan: Boolean(imageData?.sources?.includes('product_image_ocr')),
     ocrImageCount: imageData?.ocrImageCount ?? 0,
+    ocrParsedFields: imageData?.ocrParsedFields ?? nutritionFieldCount(merged.nutrition),
+    bestNutritionImageId: imageData?.bestNutritionImageId ?? null,
+    imageClarity: payload.productImageClarity ?? null,
+    labelTableDetected:
+      hasFullNutritionTable(imageData?.text || '') ||
+      (Boolean(merged.nutrition?._fromImage) &&
+        nutritionFieldCount(merged.nutrition) >= 2 &&
+        merged.nutrition?.energy_kcal != null),
+    autoNutritionOcr: Boolean(payload.autoNutritionOcr),
     nutritionSource: sources.includes('open_food_facts')
       ? 'open_food_facts'
-      : merged.nutrition?._fromImage
+      : labelNutritionConfident
         ? 'label_ocr'
         : merged.packLabelRead
           ? 'pack_label_partial'
@@ -180,6 +206,16 @@ export async function analyzeProduct(payload) {
               ? 'page'
               : 'none',
     packLabelRead: Boolean(merged.packLabelRead),
+    parsedNutrition: merged.nutrition
+      ? {
+          energy_kcal: merged.nutrition.energy_kcal,
+          sugar_g: merged.nutrition.sugar_g,
+          carbs_g: merged.nutrition.carbs_g,
+          fieldCount: nutritionFieldCount(merged.nutrition),
+          fromImage: Boolean(merged.nutrition._fromImage),
+          confident: labelNutritionConfident,
+        }
+      : null,
   };
 
   setCached(key, result);

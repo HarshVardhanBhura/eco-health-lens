@@ -3,6 +3,8 @@ import {
   parseBestNutritionBlock,
   nutritionFieldCount,
   hasPackLabelSection,
+  isConfidentLabelNutrition,
+  sanitizeNutritionPer100g,
 } from '../scoring/nutritionParse.js';
 import { sanitizeIngredientsText } from '../scoring/ingredients.js';
 import { extractFromProductImages } from './imageOcr.js';
@@ -34,6 +36,8 @@ export async function mergeProductData(page, offProduct, imageData = null) {
   if (imageData) {
     applyImageExtraction(merged, sources, imageData);
   }
+
+  applyPageNutritionText(merged, page);
 
   if (!offProduct) {
     applyIngredientInference(merged, sources, imageData);
@@ -91,6 +95,22 @@ function hasLabelNutrition(nutrition) {
   return hasTableNutrition(nutrition) || Boolean(nutrition?._fromImage);
 }
 
+function applyPageNutritionText(merged, page) {
+  const blob = page.nutritionPageText || '';
+  if (!blob.trim()) return;
+
+  const parsed = sanitizeNutritionPer100g(parseBestNutritionBlock(blob));
+  if (!parsed || !isConfidentLabelNutrition(parsed, blob)) return;
+
+  const fields = nutritionFieldCount(parsed);
+  const mergedFields = nutritionFieldCount(merged.nutrition);
+  if (fields >= mergedFields) {
+    merged.nutrition = { ...parsed, _fromImage: true, _fromPage: true };
+    merged.nutritionInferred = false;
+    merged.packLabelRead = true;
+  }
+}
+
 function applyImageExtraction(merged, sources, imageData) {
   for (const s of imageData.sources || ['product_image_ocr']) {
     if (!sources.includes(s)) sources.push(s);
@@ -116,20 +136,25 @@ function applyImageExtraction(merged, sources, imageData) {
     }
   }
 
-  const imgNutrition =
-    imageData.nutrition || parseBestNutritionBlock(imageData.text || '');
+  const imgNutrition = sanitizeNutritionPer100g(
+    imageData.nutrition || parseBestNutritionBlock(imageData.text || '')
+  );
   const imgFields = nutritionFieldCount(imgNutrition);
   const mergedFields = nutritionFieldCount(merged.nutrition);
 
   const labelText = imageData.text || '';
-  const fromLabelTable =
-    imgNutrition?.energy_kcal != null && hasPackLabelSection(labelText);
 
   if (
+    (imgNutrition && isConfidentLabelNutrition(imgNutrition, labelText)) ||
+    (imageData.nutritionConfident && imgNutrition)
+  ) {
+    merged.nutrition = { ...imgNutrition, _fromImage: true };
+    merged.nutritionInferred = false;
+    merged.packLabelRead = true;
+  } else if (
     imgNutrition &&
-    (fromLabelTable ||
-      (imgFields >= 2 &&
-        (merged.nutritionInferred || !hasLabelNutrition(merged.nutrition) || imgFields > mergedFields)))
+    imgFields >= 2 &&
+    (merged.nutritionInferred || !hasLabelNutrition(merged.nutrition) || imgFields > mergedFields)
   ) {
     merged.nutrition = { ...imgNutrition, _fromImage: true };
     merged.nutritionInferred = false;

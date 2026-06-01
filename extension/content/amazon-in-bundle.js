@@ -179,6 +179,7 @@ function scoreGalleryImage(alt, url) {
   if (/nutrition(?:al)?\s*information|per\s*100\s*g|net\s*quantity|fssai|masala/i.test(a))
     s += 12;
   if (/instant\s+noodles|back\s*of|barcode/i.test(a)) s += 6;
+  if (/mega\s*pack|front\s*(?:of\s*)?pack|hero\s*image|lifestyle/i.test(a)) s -= 12;
   if (/cranberr|fruit\s*(?:&|and)\s*nut|intense|70\s*%?\s*dark|bournville/i.test(a)) s += 8;
   const flavourHits = [
     /cranberr/,
@@ -219,6 +220,37 @@ function toFullResAmazonImageUrl(url) {
     : 'https://m.media-amazon.com';
 
   return `${host}/images/I/${id}._SL1500_.jpg`;
+}
+
+/**
+ * URL of the gallery thumb the user selected (not stale #landingImage).
+ * @param {HTMLImageElement} [clickedImg]
+ */
+function getActiveGalleryImageUrl(clickedImg) {
+  if (clickedImg?.tagName === 'IMG') {
+    const direct = resolveAmazonImageUrl(clickedImg);
+    if (direct) return direct;
+  }
+
+  const thumbSelectors = [
+    '#altImages li.selected img',
+    '#altImages li.a-button-selected img',
+    '#altImages li.imageSelected img',
+    '#altImages .item.selected img',
+    '.imageThumbnail.selected img',
+    '#ivThumbs .ivThumb.ivThumbSelected img',
+    '#ivThumbs .ivSelected img',
+    '#ivImageBlock img',
+  ];
+  for (const sel of thumbSelectors) {
+    const img = document.querySelector(sel);
+    if (!img) continue;
+    const url = resolveAmazonImageUrl(img);
+    if (url) return url;
+  }
+
+  const landing = document.querySelector('#landingImage, #imgBlkFront');
+  return landing ? resolveAmazonImageUrl(landing) : '';
 }
 
 function resolveAmazonImageUrl(img) {
@@ -296,23 +328,42 @@ function extractProductImages() {
     .map(({ url, alt, priority }) => ({ url, alt, priority }));
 }
 
-function extractNutrition(selectors) {
-  let blob = '';
+function extractNutritionPageText(selectors) {
   const keywords = selectors.nutritionKeywords || ['nutrition'];
-  document.querySelectorAll('table').forEach((table) => {
-    const t = (table.textContent || '').toLowerCase();
-    if (keywords.some((k) => t.includes(k.toLowerCase()))) {
-      blob += '\n' + table.textContent;
+  let blob = '';
+
+  const addIfNutrition = (text) => {
+    const t = (text || '').toLowerCase();
+    if (
+      keywords.some((k) => t.includes(k.toLowerCase())) ||
+      (/energy|kcal/i.test(t) && /protein|carbohydrate|sodium/i.test(t))
+    ) {
+      blob += '\n' + text;
     }
+  };
+
+  document.querySelectorAll('table').forEach((table) => addIfNutrition(table.textContent || ''));
+  document
+    .querySelectorAll(
+      '#important-information, #productDetails_feature_div, #aplus_feature_div, #productDescription, #productFactsDesktopExpander'
+    )
+    .forEach((el) => addIfNutrition(el.textContent || ''));
+
+  document.querySelectorAll('h1, h2, h3, h4, h5, strong, b, span').forEach((el) => {
+    if (!/nutrition|nutritional/i.test(el.textContent || '')) return;
+    const block = el.closest('div, section, table, li') || el.parentElement;
+    if (block) addIfNutrition(block.textContent || '');
   });
-  document.querySelectorAll('#important-information, #productDetails_feature_div').forEach((el) => {
-    const t = (el.textContent || '').toLowerCase();
-    if (keywords.some((k) => t.includes(k.toLowerCase()))) {
-      blob += '\n' + el.textContent;
-    }
-  });
+
+  return blob.trim().slice(0, 12000);
+}
+
+function extractNutrition(selectors) {
+  const blob = extractNutritionPageText(selectors);
   const parsed = parseNutritionTable(blob);
-  return Object.keys(parsed).length > 1 ? parsed : null;
+  return Object.keys(parsed).filter((k) => k !== 'per' && parsed[k] != null).length > 0
+    ? parsed
+    : null;
 }
 
 function extractMaterials(selectors) {
@@ -420,6 +471,129 @@ function blobToBase64(blob) {
 }
 
 /**
+ * Upscale + contrast for small label text (Tesseract reads tables better).
+ * @param {Blob} blob
+ */
+/**
+ * @param {Blob} blob
+ * @param {string} [url]
+ */
+async function measureImageBlob(blob, url = '') {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const width = bmp.width;
+    const height = bmp.height;
+    bmp.close();
+    const bytes = blob.size;
+    const fullRes = /_SL1[0-9]{3,4}|_AC_SL1[0-9]{3}/i.test(url);
+    const thumb = /_SX\d+_|_SY\d+_|_AC_US\d+/i.test(url);
+    let rating = 'good';
+    if (width < 600 || height < 600 || thumb) rating = 'low';
+    else if (width < 1000 || height < 1000) rating = 'ok';
+    return {
+      width,
+      height,
+      bytes,
+      fullRes,
+      thumb,
+      rating,
+      megapixels: Math.round((width * height) / 10000) / 100,
+    };
+  } catch {
+    return { width: 0, height: 0, bytes: blob.size, fullRes: false, rating: 'unknown' };
+  }
+}
+
+async function preprocessImageForOcr(blob) {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const minSide = Math.min(bmp.width, bmp.height);
+    const scale = minSide < 700 ? 2.5 : minSide < 1000 ? 2 : minSide < 1400 ? 1.35 : 1;
+    const w = Math.min(Math.round(bmp.width * scale), 2800);
+    const h = Math.min(Math.round(bmp.height * scale), 3600);
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return blob;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.filter = 'contrast(1.35) saturate(0.2)';
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const imageData = ctx.getImageData(0, 0, w, h);
+    const d = imageData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const avg = (d[i] + d[i + 1] + d[i + 2]) / 3;
+      const v = avg > 175 ? 255 : avg < 88 ? 0 : avg;
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    bmp.close();
+    const out = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.94));
+    return out || blob;
+  } catch {
+    return blob;
+  }
+}
+
+function isNutritionGalleryImage(alt, url) {
+  const a = (alt || '').toLowerCase();
+  const u = (url || '').toLowerCase();
+  return (
+    /nutrition|nutritional|per\s*100|ingredient|label|facts|back\s*of|barcode|fssai/i.test(a) ||
+    /nutrition|ingredient|label|back/.test(u)
+  );
+}
+
+function isIngredientsGalleryImage(alt) {
+  const a = (alt || '').toLowerCase();
+  return /ingredient|composition|back\s*of|barcode|allergen/i.test(a);
+}
+
+/**
+ * Rank gallery images for automatic nutrition-table OCR (no user click).
+ * @param {Array<{ url: string, alt?: string, priority?: number }>} images
+ * @param {string} [landingImageUrl]
+ */
+function rankImagesForAutoNutritionOcr(images, landingImageUrl) {
+  const landingId = amazonImageId(landingImageUrl || '');
+  const scored = (images || []).map((img) => {
+    const url = toFullResAmazonImageUrl(img.url);
+    const nutritionScore = scoreGalleryImage(img.alt, url);
+    const isNutrition =
+      isNutritionGalleryImage(img.alt, url) || nutritionScore >= 18;
+    return {
+      url,
+      alt: img.alt || '',
+      priority: img.priority || 0,
+      nutritionScore,
+      isNutrition,
+      isLanding: amazonImageId(url) === landingId,
+    };
+  });
+
+  let nutrition = scored
+    .filter((i) => i.isNutrition)
+    .sort((a, b) => b.nutritionScore - a.nutritionScore);
+
+  if (!nutrition.length) {
+    nutrition = scored
+      .filter((i) => !i.isLanding)
+      .sort((a, b) => b.nutritionScore - a.nutritionScore);
+  }
+
+  const ingredients = scored
+    .filter((i) => !i.isLanding && isIngredientsGalleryImage(i.alt))
+    .sort((a, b) => b.nutritionScore - a.nutritionScore);
+
+  const gallerySweep = scored
+    .filter((i) => !i.isLanding)
+    .sort((a, b) => b.nutritionScore - a.nutritionScore);
+
+  return { nutrition, ingredients, landingId, gallerySweep };
+}
+
+/**
  * Fetch gallery images in-browser (Amazon often blocks server-side image fetch).
  * @param {Array<{ url: string, alt?: string }>} images
  */
@@ -427,24 +601,100 @@ function blobToBase64(blob) {
  * @param {Array<{ url: string, alt?: string, priority?: number }>} images
  * @param {string} [landingImageUrl]
  */
-async function fetchImagesForOcr(images, landingImageUrl) {
-  /** @type {Array<{ url: string, alt: string, priority: number }>} */
+async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
+  const selectedOnly = options.selectedOnly === true;
+  const autoNutrition = options.autoNutrition === true;
+  /** @type {Array<{ url: string, alt: string, priority: number, nutritionImage?: boolean }>} */
   const queue = [];
 
-  if (landingImageUrl) {
+  if (selectedOnly && landingImageUrl) {
     queue.push({
       url: toFullResAmazonImageUrl(landingImageUrl),
       alt: 'Main viewer (selected)',
       priority: 2000,
+      nutritionImage: true,
     });
-  }
+  } else if (autoNutrition) {
+    const { nutrition, ingredients, landingId, gallerySweep } = rankImagesForAutoNutritionOcr(
+      images,
+      landingImageUrl
+    );
 
-  for (const img of images || []) {
-    queue.push({
-      url: toFullResAmazonImageUrl(img.url),
-      alt: img.alt || '',
-      priority: img.priority || scoreGalleryImage(img.alt, img.url),
-    });
+    for (const img of nutrition.slice(0, 4)) {
+      const altNutrition = isNutritionGalleryImage(img.alt, img.url);
+      queue.push({
+        url: img.url,
+        alt: img.alt,
+        priority: 5000 + img.nutritionScore,
+        nutritionImage: altNutrition,
+      });
+    }
+
+    for (const img of gallerySweep.slice(0, 8)) {
+      const id = amazonImageId(img.url);
+      if (queue.some((q) => amazonImageId(q.url) === id)) continue;
+      queue.push({
+        url: img.url,
+        alt: img.alt,
+        priority: 3500 + img.nutritionScore,
+        nutritionImage: isNutritionGalleryImage(img.alt, img.url),
+      });
+    }
+
+    for (const img of ingredients.slice(0, 2)) {
+      const id = amazonImageId(img.url);
+      if (queue.some((q) => amazonImageId(q.url) === id)) continue;
+      queue.push({
+        url: img.url,
+        alt: img.alt,
+        priority: 2500,
+        nutritionImage: false,
+      });
+    }
+
+    const landingIsNutrition =
+      landingImageUrl &&
+      isNutritionGalleryImage('', landingImageUrl) &&
+      scoreGalleryImage('', landingImageUrl) >= 18;
+
+    if (landingImageUrl && (landingIsNutrition || !nutrition.length)) {
+      const lid = amazonImageId(landingImageUrl);
+      if (!queue.some((q) => amazonImageId(q.url) === lid)) {
+        queue.push({
+          url: toFullResAmazonImageUrl(landingImageUrl),
+          alt: 'Main viewer',
+          priority: landingIsNutrition ? 4500 : 800,
+          nutritionImage: Boolean(landingIsNutrition),
+        });
+      }
+    }
+
+    if (queue.length) {
+      const targetIds = queue
+        .filter((q) => q.nutritionImage)
+        .map((q) => amazonImageId(q.url))
+        .filter(Boolean);
+      console.info(
+        '[EcoHealth] Auto nutrition OCR — gallery targets:',
+        targetIds.join(', ') || '(non-landing gallery sweep)'
+      );
+    }
+  } else {
+    if (landingImageUrl) {
+      queue.push({
+        url: toFullResAmazonImageUrl(landingImageUrl),
+        alt: 'Main viewer (selected)',
+        priority: 2000,
+      });
+    }
+
+    for (const img of images || []) {
+      queue.push({
+        url: toFullResAmazonImageUrl(img.url),
+        alt: img.alt || '',
+        priority: img.priority || scoreGalleryImage(img.alt, img.url),
+      });
+    }
   }
 
   const seen = new Set();
@@ -460,26 +710,62 @@ async function fetchImagesForOcr(images, landingImageUrl) {
   /** @type {Array<{ base64: string, mimeType: string, alt: string, url: string }>} */
   const buffers = [];
 
-  for (const img of ranked.slice(0, MAX_OCR_FETCH)) {
-    if (buffers.length >= 6) break;
+  const maxFetch = selectedOnly ? 1 : MAX_OCR_FETCH;
+  const maxBuffers = selectedOnly ? 1 : autoNutrition ? 8 : 6;
+
+  for (const img of ranked.slice(0, maxFetch)) {
+    if (buffers.length >= maxBuffers) break;
     try {
       const res = await fetch(img.url, { credentials: 'same-origin', mode: 'cors' });
       if (!res.ok) continue;
-      const blob = await res.blob();
+      let blob = await res.blob();
       if (blob.size < 400 || blob.size > MAX_OCR_BYTES) continue;
       const type = blob.type || 'image/jpeg';
       if (/webp/i.test(type) || /\.webp(\?|$)/i.test(img.url || '')) continue;
       if (!/^image\/(jpeg|jpg|png|gif)/i.test(type)) continue;
+      const nutritionImage =
+        autoNutrition ||
+        selectedOnly ||
+        isNutritionGalleryImage(img.alt, img.url) ||
+        (img.priority || 0) >= 2000;
+      const clarityBefore = await measureImageBlob(blob, img.url);
+      // Label contrast/threshold runs on backend (sharp) — double preprocessing breaks table OCR.
+      const clarity = clarityBefore;
       const { base64, mimeType } = await blobToBase64(blob);
+      const id = amazonImageId(img.url) || img.url.slice(-24);
+      console.info('[EcoHealth] image clarity:', id, {
+        ...clarity,
+        preprocessed: nutritionImage,
+        before: nutritionImage ? `${clarityBefore.width}×${clarityBefore.height}` : undefined,
+      });
+      if (clarity.rating === 'low' || !clarity.fullRes) {
+        console.warn(
+          '[EcoHealth] Low-resolution image for OCR — expect poor label reads:',
+          img.url.slice(-72)
+        );
+      }
       buffers.push({
         base64,
         mimeType,
         alt: img.alt || '',
         url: img.url,
+        nutritionImage,
+        clarity,
       });
     } catch (e) {
       console.warn('[EcoHealth] gallery image fetch failed', img.url?.slice(0, 80), e);
     }
+  }
+  if (buffers.length) {
+    console.table(
+      buffers.map((b) => ({
+        image: amazonImageId(b.url) || '—',
+        px: `${b.clarity?.width || '?'}×${b.clarity?.height || '?'}`,
+        kb: Math.round((b.clarity?.bytes || 0) / 1024),
+        fullRes: b.clarity?.fullRes ? 'yes' : 'no',
+        rating: b.clarity?.rating || '?',
+      }))
+    );
   }
   return buffers.length ? buffers : undefined;
 }
@@ -492,12 +778,12 @@ function buildPayload(selectorRegistry) {
   const category = extractCategory(selectorRegistry);
   const ingredientsText = extractIngredients(selectorRegistry);
   const nutrition = extractNutrition(selectorRegistry);
+  const nutritionPageText = extractNutritionPageText(selectorRegistry) || undefined;
   const barcode = extractBarcode(selectorRegistry);
   const materialsText = extractMaterials(selectorRegistry);
   const packWeightG = extractPackWeight(selectorRegistry);
   const productImages = extractProductImages();
-  const landing = document.querySelector('#landingImage, #imgBlkFront');
-  const selectedImageUrl = landing ? resolveAmazonImageUrl(landing) : undefined;
+  const selectedImageUrl = getActiveGalleryImageUrl() || undefined;
   const rawHints = extractRawHints(ingredientsText, nutrition, materialsText);
 
   return {
@@ -513,6 +799,7 @@ function buildPayload(selectorRegistry) {
     productImages: productImages.length ? productImages : undefined,
     selectedImageUrl: selectedImageUrl || undefined,
     nutrition: nutrition || undefined,
+    nutritionPageText,
     rawHints,
   };
 }
@@ -677,11 +964,24 @@ async function run() {
 
   console.info('[EcoHealth] images sent:', payload.productImages?.length ?? 0);
   if (payload.productImages?.length || payload.selectedImageUrl) {
+    payload.autoNutritionOcr = true;
     payload.productImageBuffers = await fetchImagesForOcr(
       payload.productImages || [],
-      payload.selectedImageUrl
+      payload.selectedImageUrl,
+      { autoNutrition: true }
     );
+    payload.productImageClarity = (payload.productImageBuffers || []).map((b) => ({
+      imageId: amazonImageId(b.url),
+      url: b.url,
+      ...b.clarity,
+    }));
     console.info('[EcoHealth] OCR buffers loaded:', payload.productImageBuffers?.length ?? 0);
+    if (payload.productImageBuffers?.length) {
+      console.info(
+        '[EcoHealth] OCR image ids:',
+        payload.productImageBuffers.map((b) => amazonImageId(b.url)).filter(Boolean).join(', ')
+      );
+    }
     if (payload.selectedImageUrl) {
       console.info(
         '[EcoHealth] landing image for OCR:',
@@ -692,6 +992,16 @@ async function run() {
   const result = await requestAnalysis(payload);
   lastAnalysis = { result, payload };
   updateBadge(result);
+  if (result?.enrichment) {
+    console.info(
+      '[EcoHealth] nutrition:',
+      result.enrichment.nutritionSource,
+      result.enrichment.parsedNutrition || ''
+    );
+    if (result.enrichment.bestNutritionImageId) {
+      console.info('[EcoHealth] best label image:', result.enrichment.bestNutritionImageId);
+    }
+  }
   if (result?.variants?.length) {
     console.info('[EcoHealth] variants:', result.variants.map((v) => `${v.name}=${v.health?.total}`).join(', '));
   }
@@ -719,11 +1029,14 @@ function startLandingImageWatcher(selectors) {
 
   let lastImageId = '';
   let debounceTimer = null;
+  /** @type {string | null} */
+  let pendingThumbUrl = null;
 
   const scheduleReanalyze = () => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(async () => {
-      const url = resolveAmazonImageUrl(landing);
+      const url = pendingThumbUrl || getActiveGalleryImageUrl();
+      pendingThumbUrl = null;
       const id = amazonImageId(url) || '';
       if (!url || !id || id === lastImageId) return;
       if (!/_SL1[0-9]{3}|_AC_SL1[0-9]{3}/i.test(url)) return;
@@ -734,17 +1047,49 @@ function startLandingImageWatcher(selectors) {
       const freshPayload = buildPayload(selectors);
       if (!freshPayload) return;
 
-      if (freshPayload.productImages?.length || freshPayload.selectedImageUrl) {
+      freshPayload.selectedImageUrl = url;
+
+      if (freshPayload.productImages?.length || url) {
         freshPayload.productImageBuffers = await fetchImagesForOcr(
           freshPayload.productImages || [],
-          freshPayload.selectedImageUrl
+          url,
+          { selectedOnly: true }
         );
+        freshPayload.productImageClarity = (freshPayload.productImageBuffers || []).map(
+          (b) => ({
+            imageId: amazonImageId(b.url),
+            url: b.url,
+            ...b.clarity,
+          })
+        );
+        freshPayload.ocrSelectedOnly = true;
+        console.info('[EcoHealth] OCR selected image only:', id);
       }
 
       const result = await requestAnalysis(freshPayload, true);
       if (result) {
         lastAnalysis = { result, payload: freshPayload };
         updateBadge(result);
+        if (
+          freshPayload.ocrSelectedOnly &&
+          result.enrichment?.labelTableDetected === false
+        ) {
+          console.warn(
+            '[EcoHealth] No nutrition table on image',
+            id,
+            '— select the nutrition facts thumbnail (not the front pack).'
+          );
+        }
+        if (result.enrichment) {
+          console.info(
+            '[EcoHealth] nutrition (re-analyze):',
+            result.enrichment.nutritionSource,
+            result.enrichment.parsedNutrition || ''
+          );
+          if (result.enrichment.bestNutritionImageId) {
+            console.info('[EcoHealth] best label image:', result.enrichment.bestNutritionImageId);
+          }
+        }
       }
     }, 1200);
   };
@@ -755,9 +1100,20 @@ function startLandingImageWatcher(selectors) {
     attributeFilter: ['src', 'data-old-hires', 'data-a-dynamic-image'],
   });
 
-  document.querySelectorAll('#altImages li, .imageThumbnail, #ivThumbs .imageThumb').forEach((el) => {
-    el.addEventListener('click', () => setTimeout(scheduleReanalyze, 300));
-  });
+  document
+    .querySelectorAll('#altImages li, .imageThumbnail, #ivThumbs .imageThumb')
+    .forEach((el) => {
+      el.addEventListener('click', (ev) => {
+        const thumbImg =
+          ev.target?.tagName === 'IMG'
+            ? ev.target
+            : el.querySelector('img');
+        if (thumbImg) {
+          pendingThumbUrl = resolveAmazonImageUrl(thumbImg) || null;
+        }
+        setTimeout(scheduleReanalyze, 500);
+      });
+    });
 }
 
 function startSpaObserver() {
