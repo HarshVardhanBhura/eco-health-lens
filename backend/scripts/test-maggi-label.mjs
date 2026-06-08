@@ -156,6 +156,7 @@ if (gdaFixed?.energy_kcal !== 384) {
 console.log('OK GDA front pack picks 384 kcal not 451');
 
 const garbledMaggiOcr = `Nutrition Information
+Energy 384
 Frwy hay 384 288 ts
 Carhatyduate ig 59.6 ey (EX
 Tate Sagas nt 1 et Pa

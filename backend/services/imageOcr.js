@@ -211,14 +211,12 @@ function pickNutritionWinner(state, selectedImageId, selectedOnly) {
         (a.ocrScore || 0) +
         (hasFullNutritionTable(a.text || '') ? 50 : 0) +
         (a.confident ? 20 : 0) +
-        a.count +
-        (a.nutrition?.energy_kcal >= 360 && a.nutrition?.energy_kcal <= 430 ? 8 : 0);
+        a.count;
       const scoreB =
         (b.ocrScore || 0) +
         (hasFullNutritionTable(b.text || '') ? 50 : 0) +
         (b.confident ? 20 : 0) +
-        b.count +
-        (b.nutrition?.energy_kcal >= 360 && b.nutrition?.energy_kcal <= 430 ? 8 : 0);
+        b.count;
       return scoreB - scoreA;
     });
   if (labelHits.length && labelHits[0].nutrition) {
@@ -395,10 +393,12 @@ export async function extractFromProductImages(images, options = {}) {
         (p) =>
           p.confident &&
           (p.ocrScore || 0) >= 80 &&
-          p.nutrition?.energy_kcal >= 360 &&
-          p.nutrition?.energy_kcal <= 495
+          p.nutrition?.energy_kcal > 0
       );
-      if (strongLabel) break;
+      if (strongLabel) {
+        console.info('[EcoHealth] Found confident nutrition table, skipping remaining buffers');
+        break;
+      }
     }
 
     for (const img of ranked) {

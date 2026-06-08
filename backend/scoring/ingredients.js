@@ -17,6 +17,9 @@ const INGREDIENT_STOP_MARKERS = [
   /\bwarnings?\b/i,
   /\bdirections?\s+before\s+using/i,
   /\bdirections?\s+before\s+consuming/i,
+  /\bdirections:\b/i,
+  /\ballergen\s*note/i,
+  /\ballergen\s*information/i,
   /customer\s*care/i,
   /nutrition\s*information/i,
   /store\s+in\s+a\s+cool/i,
@@ -66,7 +69,7 @@ export function splitIngredients(text) {
     if (ch === '(' || ch === '[') depth++;
     else if (ch === ')' || ch === ']') depth = Math.max(0, depth - 1);
 
-    if ((ch === ',' || ch === ';' || ch === '•' || ch === '·') && depth === 0) {
+    if ((ch === ',' || ch === ';' || ch === '•' || ch === '·' || ch === '.') && depth === 0) {
       if (current.trim()) parts.push(current.trim());
       current = '';
       continue;
@@ -84,11 +87,19 @@ export function splitIngredients(text) {
  * @param {string} token
  */
 function normalizeIngredientToken(token) {
-  return token
+  // Remove nested parentheses properly (e.g. "Acidity regulators (501(i) & 500(i))")
+  let prev;
+  let current = token;
+  do {
+    prev = current;
+    current = current.replace(/\([^()]*\)/g, ' ');
+  } while (current !== prev);
+
+  return current
     .toLowerCase()
-    .replace(/\([^)]*\)/g, ' ')
     .replace(/\[[^\]]*\]/g, ' ')
     .replace(/\s+/g, ' ')
+    .replace(/^[:\s]+/, '') // Remove leading colons/spaces if split after a period
     .trim();
 }
 

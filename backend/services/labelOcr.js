@@ -38,7 +38,6 @@ export function scoreLabelOcrText(text) {
   const fields = nutritionFieldCount(nutrition);
   let score = fields * 15;
   if (hasFullNutritionTable(norm)) score += 50;
-  if (nutrition?.energy_kcal >= 360 && nutrition?.energy_kcal <= 495) score += 35;
   if (/nutrition/i.test(norm) && /per\s*100/i.test(norm)) score += 20;
   if (norm.length > 80) score += Math.min(15, Math.floor(norm.length / 120));
 

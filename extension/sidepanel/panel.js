@@ -394,12 +394,22 @@ function renderFlaggedIngredients(ingredients) {
   }
 }
 
+/**
+ * @param {string} title
+ */
+function truncateTitle(title) {
+  if (!title) return 'Product analysis';
+  const clean = title.replace(/\s+/g, ' ').trim();
+  if (clean.length <= 60) return clean;
+  return clean.slice(0, 57) + '...';
+}
+
 /** @param {import('../shared/types.js').AnalysisResult} result */
 function render(result) {
   closeGradePopover();
   hideAllSections();
 
-  $('product-title').textContent = result.title || 'Product analysis';
+  $('product-title').textContent = truncateTitle(result.title);
   const conf = $('confidence');
   conf.textContent = `Data confidence: ${result.confidence}`;
   conf.className = `confidence ${result.confidence}`;

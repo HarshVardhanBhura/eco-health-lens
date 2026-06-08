@@ -89,14 +89,14 @@
       "name": "PU / faux leather",
       "aliases": ["pu leather", "faux leather", "vegan leather", "synthetic leather"],
       "impact": -8,
-      "reason": "Plastic-based alternative to leather"
+      "reason": "Plastic-based, but avoids animal hide — no animals harmed, unlike real leather"
     },
     {
       "id": "leather",
       "name": "Leather",
       "aliases": ["genuine leather", "real leather", "leather upper"],
       "impact": -6,
-      "reason": "Animal hide; tanning chemicals and methane from livestock"
+      "reason": "Made from animal hide (animals are slaughtered); plus tanning chemicals and livestock methane"
     },
     {
       "id": "pvc",

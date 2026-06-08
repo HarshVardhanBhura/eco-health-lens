@@ -107,11 +107,11 @@ function extractExplicitKcalValues(text) {
   const found = [];
   for (const m of text.matchAll(/(\d{3,4})\s*kcal/gi)) {
     const v = parseFloat(m[1]);
-    if (v >= 300 && v <= 500) found.push(v);
+    if (v >= 150 && v <= 600) found.push(v);
   }
   for (const m of text.matchAll(/energy[\s\S]{0,45}?(\d{3,4})\s*kcal/gi)) {
     const v = parseFloat(m[1]);
-    if (v >= 300 && v <= 500) found.push(v);
+    if (v >= 150 && v <= 600) found.push(v);
   }
   return found;
 }
@@ -221,7 +221,7 @@ export function refineEnergyFromLabel(text, nutrition) {
   }
 
   if (!hasFullNutritionTable(text)) {
-    const per100Explicit = extractExplicitKcalValues(text).filter((k) => k >= 360 && k <= 430);
+    const per100Explicit = extractExplicitKcalValues(text).filter((k) => k >= 150 && k <= 600);
     if (per100Explicit.length) {
       const best = pickBestEnergyKcal(per100Explicit, nutrition);
       if (best != null) {
@@ -307,8 +307,8 @@ function parseLineBasedNutrition(text) {
       if (!re.test(line)) continue;
       let val;
       if (key === 'energy_kcal') {
-        const per100 = nums.filter((n) => n >= 300 && n <= 430);
-        val = per100[0] ?? nums.find((n) => inRange(key, n));
+  const per100 = nums.filter((n) => n >= 150 && n <= 600);
+  val = per100[0] ?? nums.find((n) => inRange(key, n));
       } else {
         val = nums.find((n) => inRange(key, n));
       }
@@ -393,7 +393,11 @@ function repairOcrSugarDecimals(nutrition, text) {
   if (!nutrition) return nutrition;
   const e = Number(nutrition.energy_kcal);
   const c = Number(nutrition.carbs_g);
-  if (e < 360 || e > 430 || c < 50 || c > 70) return nutrition;
+  
+  // Only apply aggressive sugar repair if the macros suggest a high-carb/moderate-energy food 
+  // (like noodles, biscuits, cereals) where 1g sugar is unlikely but 1.8g is common.
+  // This prevents falsely inflating sugar on products that genuinely have 1g.
+  if (e < 300 || e > 550 || c < 40) return nutrition;
 
   const s = Number(nutrition.sugar_g);
   const a = Number(nutrition.added_sugar_g);
@@ -476,7 +480,7 @@ function isBetterMacroValue(key, candidate, current) {
     if (candidate >= 5 && candidate <= 15 && current < 5) return true;
   }
   if (key === 'energy_kcal') {
-    if (candidate >= 360 && candidate <= 430 && (current < 360 || current > 430)) return true;
+    if (candidate >= 150 && candidate <= 600 && (current < 150 || current > 600)) return true;
   }
   return false;
 }
@@ -632,11 +636,11 @@ export function isConfidentLabelNutrition(nutrition, labelText = '') {
 
   const fullTable = hasFullNutritionTable(labelText);
   const explicitKcal = extractExplicitKcalValues(labelText);
-  const per100Kcal = explicitKcal.filter((k) => k >= 360 && k <= 495);
+  const per100Kcal = explicitKcal.filter((k) => k >= 150 && k <= 600);
   const energyInLabelBand =
     n.energy_kcal != null &&
-    Number(n.energy_kcal) >= 360 &&
-    Number(n.energy_kcal) <= 495;
+    Number(n.energy_kcal) >= 150 &&
+    Number(n.energy_kcal) <= 600;
   const energyOk =
     n.energy_kcal != null &&
     (fullTable ||
@@ -691,10 +695,10 @@ function parseFssaiNumberSequence(text) {
   const nums = [...norm.matchAll(/\b(\d{1,4}(?:\.\d{1,2})?)\b/g)].map((m) => parseFloat(m[1]));
   const eIndices = [];
   nums.forEach((n, i) => {
-    if (n >= 350 && n <= 495) eIndices.push(i);
+    if (n >= 150 && n <= 600) eIndices.push(i);
   });
   if (!eIndices.length) {
-    const fallback = nums.findIndex((n) => n >= 250 && n <= 500);
+    const fallback = nums.findIndex((n) => n >= 100 && n <= 900);
     if (fallback >= 0) eIndices.push(fallback);
   }
   if (!eIndices.length || nums.length < eIndices[0] + 4) return null;
@@ -872,7 +876,6 @@ export function parseNutritionTable(text) {
     const preferHeader =
       headerCluster &&
       nutritionFieldCount(headerCluster) >= 2 &&
-      (headerCluster.energy_kcal >= 360 && headerCluster.energy_kcal <= 430) &&
       nutritionFieldCount(seq) <= nutritionFieldCount(headerCluster) + 1;
     if (preferHeader) return finalizeParsedNutrition(headerCluster, text);
     return finalizeParsedNutrition(seq, text);
@@ -881,7 +884,7 @@ export function parseNutritionTable(text) {
   if (headerCluster) return finalizeParsedNutrition(headerCluster, text);
 
   const hintsOnly = extractLineMacroHints(text);
-  const energyFromText = text.match(/\b(3[5-9]\d|4[0-9]{2})\b/);
+  const energyFromText = text.match(/\b(1[5-9]\d|[2-5]\d{2}|600)\b/);
   if (Object.keys(hintsOnly).length && energyFromText) {
     return finalizeParsedNutrition(
       { per: '100g', energy_kcal: parseFloat(energyFromText[1]), ...hintsOnly },
