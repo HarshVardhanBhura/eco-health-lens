@@ -24,7 +24,7 @@ const NUTRITION_ALT_RE =
 const MAX_IMAGES = 5;
 
 /** Render free tier HTTP requests time out around 30s — stay under this budget. */
-const DEFAULT_OCR_BUDGET_MS = 24_000;
+const DEFAULT_OCR_BUDGET_MS = 28_000;
 
 function overOcrBudget(deadline) {
   return deadline != null && Date.now() >= deadline;
@@ -317,6 +317,10 @@ export async function extractFromProductImages(images, options = {}) {
   imageBuffers = [...imageBuffers].sort(
     (a, b) => (b.nutritionImage ? 1 : 0) - (a.nutritionImage ? 1 : 0)
   );
+  if (options.autoNutritionOcr && imageBuffers.length) {
+    const labelBuffers = imageBuffers.filter((b) => b.nutritionImage);
+    imageBuffers = (labelBuffers.length ? labelBuffers : imageBuffers).slice(0, 3);
+  }
 
   let ranked = [...(images || [])]
     .filter((img) => img?.url?.startsWith('http'))
@@ -368,12 +372,14 @@ export async function extractFromProductImages(images, options = {}) {
     };
     let ocrAttempts = 0;
     let ocrSuccess = 0;
+    let ocrBudgetExceeded = false;
     const bufferedUrls = new Set(
       imageBuffers.map((b) => b.url).filter(Boolean)
     );
 
     for (const bufImg of imageBuffers) {
       if (overOcrBudget(deadline)) {
+        ocrBudgetExceeded = true;
         console.warn('[EcoHealth] OCR budget reached — returning best result so far');
         break;
       }
@@ -414,7 +420,10 @@ export async function extractFromProductImages(images, options = {}) {
     }
 
     for (const img of ranked) {
-      if (overOcrBudget(deadline)) break;
+      if (overOcrBudget(deadline)) {
+        ocrBudgetExceeded = true;
+        break;
+      }
       if (img.url && bufferedUrls.has(img.url)) continue;
 
       const altText = (img.alt || '').trim();
@@ -527,6 +536,8 @@ export async function extractFromProductImages(images, options = {}) {
       variants: variantBlocks.length >= 2 ? variantBlocks : undefined,
       sources: ocrSuccess > 0 ? ['product_image_ocr'] : ['product_image_alt'],
       ocrImageCount: ocrSuccess,
+      ocrAttempted: ocrAttempts > 0,
+      ocrBudgetExceeded,
       labelPackDetected,
       bestNutritionImageId: state.bestNutritionImageId,
       ocrParsedFields: nutritionFieldCount(bestNutrition),

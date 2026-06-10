@@ -451,7 +451,7 @@ function extractRawHints(ingredientsText, nutrition, materialsText) {
   };
 }
 
-const MAX_OCR_FETCH = 4;
+const MAX_OCR_FETCH = 3;
 const MAX_OCR_BYTES = 2_500_000;
 
 /**
@@ -620,28 +620,31 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
       landingImageUrl
     );
 
-    for (const img of nutrition.slice(0, 4)) {
-      const altNutrition = isNutritionGalleryImage(img.alt, img.url);
+    // Label-first: only queue likely nutrition-table images (max 3). Skipping
+    // generic gallery sweeps keeps OCR within Render's ~30s request limit.
+    for (const img of nutrition.slice(0, 3)) {
       queue.push({
         url: img.url,
         alt: img.alt,
         priority: 5000 + img.nutritionScore,
-        nutritionImage: altNutrition,
+        nutritionImage: true,
       });
     }
 
-    for (const img of gallerySweep.slice(0, 4)) {
-      const id = amazonImageId(img.url);
-      if (queue.some((q) => amazonImageId(q.url) === id)) continue;
-      queue.push({
-        url: img.url,
-        alt: img.alt,
-        priority: 3500 + img.nutritionScore,
-        nutritionImage: isNutritionGalleryImage(img.alt, img.url),
-      });
+    if (!queue.length) {
+      for (const img of gallerySweep.slice(0, 2)) {
+        const id = amazonImageId(img.url);
+        if (queue.some((q) => amazonImageId(q.url) === id)) continue;
+        queue.push({
+          url: img.url,
+          alt: img.alt,
+          priority: 3500 + img.nutritionScore,
+          nutritionImage: isNutritionGalleryImage(img.alt, img.url),
+        });
+      }
     }
 
-    for (const img of ingredients.slice(0, 2)) {
+    for (const img of ingredients.slice(0, 1)) {
       const id = amazonImageId(img.url);
       if (queue.some((q) => amazonImageId(q.url) === id)) continue;
       queue.push({
@@ -711,7 +714,7 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
   const buffers = [];
 
   const maxFetch = selectedOnly ? 1 : MAX_OCR_FETCH;
-  const maxBuffers = selectedOnly ? 1 : autoNutrition ? 4 : 4;
+  const maxBuffers = selectedOnly ? 1 : autoNutrition ? 3 : 3;
 
   for (const img of ranked.slice(0, maxFetch)) {
     if (buffers.length >= maxBuffers) break;
@@ -723,11 +726,11 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
       const type = blob.type || 'image/jpeg';
       if (/webp/i.test(type) || /\.webp(\?|$)/i.test(img.url || '')) continue;
       if (!/^image\/(jpeg|jpg|png|gif)/i.test(type)) continue;
-      const nutritionImage =
-        autoNutrition ||
-        selectedOnly ||
-        isNutritionGalleryImage(img.alt, img.url) ||
-        (img.priority || 0) >= 2000;
+      const nutritionImage = Boolean(
+        img.nutritionImage ||
+          selectedOnly ||
+          isNutritionGalleryImage(img.alt, img.url)
+      );
       const clarityBefore = await measureImageBlob(blob, img.url);
       // Label contrast/threshold runs on backend (sharp) — double preprocessing breaks table OCR.
       const clarity = clarityBefore;

@@ -92,7 +92,7 @@ export async function analyzeProduct(payload) {
       imageBuffers: payload.productImageBuffers,
       ocrSelectedOnly: payload.ocrSelectedOnly === true,
       autoNutritionOcr: payload.autoNutritionOcr === true,
-      ocrBudgetMs: 24_000,
+      ocrBudgetMs: 28_000,
     });
   }
 
@@ -179,6 +179,15 @@ export async function analyzeProduct(payload) {
   } else if (productType === 'food' && merged.nutritionInferred && !result.variants?.length) {
     result.message =
       'Macros estimated from ingredient list and pack weight — not from an official nutrition label.';
+  } else if (
+    productType === 'food' &&
+    imageData?.ocrAttempted &&
+    !labelNutritionConfident &&
+    !merged.nutritionInferred &&
+    !result.variants?.length
+  ) {
+    result.message =
+      'Could not read the nutrition table from pack images — try clicking the nutrition label thumbnail in the gallery, then refresh.';
   } else if (productType === 'food' && confidence === 'low') {
     result.message =
       'Limited product data — a full ingredient list or nutrition table on the listing improves accuracy.';
@@ -239,7 +248,13 @@ export async function analyzeProduct(payload) {
       : null,
   };
 
-  setCached(key, result);
+  const cacheable =
+    labelNutritionConfident ||
+    merged.packLabelRead ||
+    sources.includes('open_food_facts') ||
+    (!merged.nutritionInferred && confidence !== 'low');
+  if (cacheable) setCached(key, result);
+
   return result;
 }
 

@@ -171,18 +171,40 @@ async function getTabAnalysis(tabId) {
  * @param {import('../shared/types.js').ProductPayload} payload
  * @returns {Promise<import('../shared/types.js').AnalysisResult>}
  */
-async function fetchAnalysis(payload) {
-  const res = await fetch(`${API_BASE_URL}/v1/analyze`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(45_000),
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(err || `API ${res.status}`);
+async function wakeBackend() {
+  try {
+    await fetch(`${API_BASE_URL}/v1/health`, { signal: AbortSignal.timeout(90_000) });
+  } catch (e) {
+    console.warn('[EcoHealth] backend wake', e?.message || e);
   }
-  return res.json();
+}
+
+async function fetchAnalysis(payload) {
+  await wakeBackend();
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE_URL}/v1/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(55_000),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(err || `API ${res.status}`);
+      }
+      return res.json();
+    } catch (e) {
+      lastErr = e;
+      if (attempt === 0) {
+        console.warn('[EcoHealth] analyze retry after', e?.message || e);
+        await new Promise((r) => setTimeout(r, 1500));
+        continue;
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -203,7 +225,12 @@ async function analyzeProduct(payload, tabId, forceRefresh = false) {
   const result = await fetchAnalysis(payload);
   result.asin = payload.asin;
   result.title = result.title || payload.title;
-  await setCached(payload.asin, result);
+  const cacheable =
+    result.enrichment?.nutritionSource === 'label_ocr' ||
+    result.enrichment?.nutritionSource === 'open_food_facts' ||
+    result.enrichment?.nutritionSource === 'pack_label_partial' ||
+    (result.confidence && result.confidence !== 'low' && result.enrichment?.nutritionSource !== 'ingredient_estimate');
+  if (cacheable) await setCached(payload.asin, result);
 
   if (tabId != null) {
     await setTabAnalysis(tabId, { asin: payload.asin, result, payload });

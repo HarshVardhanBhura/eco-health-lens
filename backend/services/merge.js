@@ -198,6 +198,14 @@ function shouldSkipIngredientInference(merged, imageData) {
 
 function applyIngredientInference(merged, sources, imageData = null) {
   if (shouldSkipIngredientInference(merged, imageData)) return;
+  // Pack OCR was attempted but no official label table — do not substitute guesses.
+  if (
+    imageData?.ocrAttempted &&
+    !hasLabelNutrition(merged.nutrition) &&
+    (imageData.ocrBudgetExceeded || imageData.ocrImageCount > 0)
+  ) {
+    return;
+  }
   if (!merged.ingredientsText) return;
   const inferred = inferNutritionFromIngredients(merged.ingredientsText, merged.packWeightG);
   if (!inferred) return;
