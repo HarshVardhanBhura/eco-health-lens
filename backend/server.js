@@ -1,7 +1,8 @@
 import { createServer } from 'http';
-import { analyzeProduct } from './routes/analyze.js';
 
 const PORT = Number(process.env.PORT) || 3000;
+
+console.log('[EcoHealth] starting…');
 
 process.on('unhandledRejection', (reason) => {
   console.error('[EcoHealth] unhandledRejection:', reason);
@@ -65,6 +66,9 @@ const server = createServer(async (req, res) => {
 
   if (req.method === 'POST' && url.pathname === '/v1/analyze') {
     try {
+      // Lazy-load analysis stack (sharp, tesseract) so /v1/health is ready
+      // immediately on cold start — important for Render free-tier deploys.
+      const { analyzeProduct } = await import('./routes/analyze.js');
       const raw = await readBody(req);
       const payload = JSON.parse(raw || '{}');
       if (!payload.retailer) {
@@ -87,6 +91,11 @@ const server = createServer(async (req, res) => {
   sendJson(res, 404, { error: 'Not found' });
 });
 
+server.on('error', (err) => {
+  console.error('[EcoHealth] server failed to start:', err);
+  process.exit(1);
+});
+
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`EcoHealth API listening on http://localhost:${PORT}`);
+  console.log(`[EcoHealth] API listening on port ${PORT}`);
 });
