@@ -21,7 +21,14 @@ import { recognizeLabelImage, scoreLabelOcrText } from './labelOcr.js';
 const NUTRITION_ALT_RE =
   /nutrition|ingredient|label|facts|back\s*of|pack|barcode|composition|allergen|per\s*100/i;
 
-const MAX_IMAGES = 10;
+const MAX_IMAGES = 5;
+
+/** Render free tier HTTP requests time out around 30s — stay under this budget. */
+const DEFAULT_OCR_BUDGET_MS = 24_000;
+
+function overOcrBudget(deadline) {
+  return deadline != null && Date.now() >= deadline;
+}
 
 const FLAVOUR_ALT_RE = /cranberr|fruit\s*(?:&|and)\s*nut|intense|70\s*%?\s*dark|bournville/i;
 
@@ -292,6 +299,10 @@ function applyOcrText(state, text, imageId = null, options = {}) {
  * @param {{ selectedImageUrl?: string, imageBuffers?: Array<{ base64: string, mimeType?: string, alt?: string, url?: string }> }} [options]
  */
 export async function extractFromProductImages(images, options = {}) {
+  const deadline =
+    options.deadline ??
+    (options.ocrBudgetMs ? Date.now() + options.ocrBudgetMs : Date.now() + DEFAULT_OCR_BUDGET_MS);
+
   let imageBuffers = options.imageBuffers || [];
   const selectedImageId = amazonImageIdFromUrl(options.selectedImageUrl || '');
   const ocrSelectedOnly = options.ocrSelectedOnly === true;
@@ -362,6 +373,10 @@ export async function extractFromProductImages(images, options = {}) {
     );
 
     for (const bufImg of imageBuffers) {
+      if (overOcrBudget(deadline)) {
+        console.warn('[EcoHealth] OCR budget reached — returning best result so far');
+        break;
+      }
       if (!bufImg?.base64) continue;
       let buffer;
       try {
@@ -390,10 +405,7 @@ export async function extractFromProductImages(images, options = {}) {
         { nutritionImage: labelImage }
       );
       const strongLabel = state.perImageNutrition.find(
-        (p) =>
-          p.confident &&
-          (p.ocrScore || 0) >= 80 &&
-          p.nutrition?.energy_kcal > 0
+        (p) => p.confident && p.nutrition?.energy_kcal > 0
       );
       if (strongLabel) {
         console.info('[EcoHealth] Found confident nutrition table, skipping remaining buffers');
@@ -402,6 +414,7 @@ export async function extractFromProductImages(images, options = {}) {
     }
 
     for (const img of ranked) {
+      if (overOcrBudget(deadline)) break;
       if (img.url && bufferedUrls.has(img.url)) continue;
 
       const altText = (img.alt || '').trim();

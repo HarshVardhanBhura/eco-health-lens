@@ -7,6 +7,9 @@ import {
 } from '../scoring/nutritionParse.js';
 import { preprocessLabelBuffer } from './labelPreprocess.js';
 
+/** Stop extra OCR passes once a label parse is this strong. */
+const STRONG_LABEL_SCORE = 80;
+
 /**
  * Rebuild reading order from Tesseract line boxes (tables read top-to-bottom).
  * @param {import('tesseract.js').Page} data
@@ -80,46 +83,63 @@ async function recognizeOnce(worker, buffer, url, psm) {
  * @param {Buffer} working
  * @param {string} url
  */
-async function collectLabelOcrCandidates(worker, working, url) {
+function bestScore(candidates) {
+  return candidates.reduce((m, c) => Math.max(m, c.score), 0);
+}
+
+async function collectLabelOcrCandidates(worker, working, url, modes = ['6', '4']) {
   /** @type {Array<{ text: string, score: number, psm: string }>} */
   const candidates = [];
 
-  for (const psm of ['6', '4', '11', '3']) {
+  for (const psm of modes) {
     const { text } = await recognizeOnce(worker, working, url, psm);
     if (!text?.trim()) continue;
     const scored = scoreLabelOcrText(text);
     candidates.push({ text: scored.norm || text, score: scored.score, psm });
   }
 
-  try {
-    await worker.setParameters({
-      tessedit_pageseg_mode: '6',
-      tessedit_char_whitelist:
-        '0123456789.,%()+-/kcalgmgKCALGMGABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz &',
-    });
-    const { text } = await recognizeOnce(worker, working, url, '6');
-    if (text?.trim()) {
-      const scored = scoreLabelOcrText(text);
-      candidates.push({ text: scored.norm || text, score: scored.score + 5, psm: 'whitelist' });
+  if (bestScore(candidates) < STRONG_LABEL_SCORE) {
+    try {
+      await worker.setParameters({
+        tessedit_pageseg_mode: '6',
+        tessedit_char_whitelist:
+          '0123456789.,%()+-/kcalgmgKCALGMGABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz &',
+      });
+      const { text } = await recognizeOnce(worker, working, url, '6');
+      if (text?.trim()) {
+        const scored = scoreLabelOcrText(text);
+        candidates.push({ text: scored.norm || text, score: scored.score + 5, psm: 'whitelist' });
+      }
+    } finally {
+      await worker.setParameters({ tessedit_char_whitelist: '', tessedit_pageseg_mode: '6' }).catch(
+        () => {}
+      );
     }
-  } finally {
-    await worker.setParameters({ tessedit_char_whitelist: '', tessedit_pageseg_mode: '6' }).catch(
-      () => {}
-    );
   }
   return candidates;
 }
 
 export async function recognizeLabelImage(worker, buffer, url) {
   /** @type {Array<{ text: string, score: number, psm: string }>} */
-  let candidates = await collectLabelOcrCandidates(worker, buffer, url);
+  let candidates = await collectLabelOcrCandidates(worker, buffer, url, ['6', '4']);
 
-  try {
-    const prepped = await preprocessLabelBuffer(buffer);
-    const preCandidates = await collectLabelOcrCandidates(worker, prepped, url);
-    candidates = [...candidates, ...preCandidates];
-  } catch (e) {
-    console.warn('[EcoHealth] label preprocess skip:', url.slice(0, 80), e.message || e);
+  if (bestScore(candidates) < STRONG_LABEL_SCORE) {
+    const fallback = await collectLabelOcrCandidates(worker, buffer, url, ['11', '3']);
+    candidates = [...candidates, ...fallback];
+  }
+
+  if (bestScore(candidates) < STRONG_LABEL_SCORE) {
+    try {
+      const prepped = await preprocessLabelBuffer(buffer);
+      const preCandidates = await collectLabelOcrCandidates(worker, prepped, url, ['6', '4']);
+      candidates = [...candidates, ...preCandidates];
+      if (bestScore(candidates) < STRONG_LABEL_SCORE) {
+        const preFallback = await collectLabelOcrCandidates(worker, prepped, url, ['11', '3']);
+        candidates = [...candidates, ...preFallback];
+      }
+    } catch (e) {
+      console.warn('[EcoHealth] label preprocess skip:', url.slice(0, 80), e.message || e);
+    }
   }
 
   if (!candidates.length) return '';

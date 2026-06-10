@@ -451,7 +451,7 @@ function extractRawHints(ingredientsText, nutrition, materialsText) {
   };
 }
 
-const MAX_OCR_FETCH = 8;
+const MAX_OCR_FETCH = 4;
 const MAX_OCR_BYTES = 2_500_000;
 
 /**
@@ -630,7 +630,7 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
       });
     }
 
-    for (const img of gallerySweep.slice(0, 8)) {
+    for (const img of gallerySweep.slice(0, 4)) {
       const id = amazonImageId(img.url);
       if (queue.some((q) => amazonImageId(q.url) === id)) continue;
       queue.push({
@@ -711,7 +711,7 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
   const buffers = [];
 
   const maxFetch = selectedOnly ? 1 : MAX_OCR_FETCH;
-  const maxBuffers = selectedOnly ? 1 : autoNutrition ? 8 : 6;
+  const maxBuffers = selectedOnly ? 1 : autoNutrition ? 4 : 4;
 
   for (const img of ranked.slice(0, maxFetch)) {
     if (buffers.length >= maxBuffers) break;
@@ -987,7 +987,15 @@ async function run() {
   if (!fetchOcrImages) {
     console.info('[EcoHealth] skipping gallery OCR for non-food listing');
   }
-  if (fetchOcrImages && (payload.productImages?.length || payload.selectedImageUrl)) {
+  const richPageData =
+    payload.rawHints?.hasNutrition &&
+    payload.rawHints?.hasIngredients &&
+    payload.nutrition &&
+    Object.keys(payload.nutrition).filter((k) => k !== 'per' && payload.nutrition[k] != null).length >= 4;
+  if (richPageData) {
+    console.info('[EcoHealth] page already has nutrition + ingredients — skipping gallery OCR');
+  }
+  if (fetchOcrImages && !richPageData && (payload.productImages?.length || payload.selectedImageUrl)) {
     payload.autoNutritionOcr = true;
     payload.productImageBuffers = await fetchImagesForOcr(
       payload.productImages || [],

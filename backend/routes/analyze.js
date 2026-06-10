@@ -72,10 +72,19 @@ export async function analyzeProduct(payload) {
     (payload.ingredientsText || '').length > 10 ||
     payload.rawHints?.hasNutrition ||
     payload.rawHints?.hasIngredients;
+  const pageNutritionFields = payload.nutrition
+    ? Object.keys(payload.nutrition).filter(
+        (k) => !['per', 'pack_weight_g'].includes(k) && payload.nutrition[k] != null
+      ).length
+    : 0;
+  const richPageData =
+    pageNutritionFields >= 4 && (payload.ingredientsText || '').length > 15;
+
   const runImageOcr =
-    likelyFood ||
-    payload.ocrSelectedOnly === true ||
-    payload.forceImageOcr === true;
+    !richPageData &&
+    (likelyFood ||
+      payload.ocrSelectedOnly === true ||
+      payload.forceImageOcr === true);
 
   if (runImageOcr && (payload.productImages?.length || payload.productImageBuffers?.length)) {
     imageData = await extractFromProductImages(payload.productImages || [], {
@@ -83,6 +92,7 @@ export async function analyzeProduct(payload) {
       imageBuffers: payload.productImageBuffers,
       ocrSelectedOnly: payload.ocrSelectedOnly === true,
       autoNutritionOcr: payload.autoNutritionOcr === true,
+      ocrBudgetMs: 24_000,
     });
   }
 
