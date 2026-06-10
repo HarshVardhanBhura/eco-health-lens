@@ -995,13 +995,8 @@ function isGoodEnoughResult(result) {
   if (!result) return false;
   if (result.enrichment?.offMatched) return true;
   if (result.enrichment?.nutritionSource === 'label_ocr') return true;
-  if (result.enrichment?.nutritionSource === 'page' && result.confidence !== 'low') return true;
-  if (
-    result.health?.total != null &&
-    result.enrichment?.nutritionSource !== 'ingredient_estimate'
-  ) {
-    return true;
-  }
+  if (result.enrichment?.nutritionSource === 'open_food_facts') return true;
+  // Do not skip the image pass just because a weak page-only score exists.
   return false;
 }
 

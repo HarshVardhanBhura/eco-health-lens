@@ -135,7 +135,12 @@ export function buildHealthRationale(merged, additiveResult, components) {
   /** @type {Array<{ text: string, type: 'positive' | 'negative' | 'neutral' }>} */
   const rationale = [];
 
-  if (merged.nutritionInferred) {
+  if (merged.offEnriched) {
+    rationale.push({
+      type: 'positive',
+      text: 'Nutrition data from Open Food Facts (matched by product barcode).',
+    });
+  } else if (merged.nutritionInferred) {
     rationale.push({
       type: 'neutral',
       text: 'Nutrition estimated from ingredients — not from an official pack label.',

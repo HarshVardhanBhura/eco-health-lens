@@ -91,7 +91,7 @@ export async function analyzeProduct(payload) {
   // Fast barcode scan from pack photos before heavy nutrition-table OCR.
   if (!offHit && likelyFood && hasBuffers && !skipHeavyOcr) {
     const quickScan = await extractBarcodesFromBuffers(payload.productImageBuffers, {
-      maxImages: 4,
+      maxImages: 6,
     });
     for (const b of [quickScan.barcode, ...(quickScan.barcodes || [])].filter(Boolean)) {
       if (!barcodesToTry.includes(b)) barcodesToTry.push(b);

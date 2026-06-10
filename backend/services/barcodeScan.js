@@ -7,7 +7,7 @@ import { extractBarcodeFromText } from '../scoring/nutritionParse.js';
  * @param {{ maxImages?: number }} [options]
  */
 export async function extractBarcodesFromBuffers(imageBuffers, options = {}) {
-  const maxImages = options.maxImages ?? 4;
+  const maxImages = options.maxImages ?? 6;
   const buffers = [...(imageBuffers || [])]
     .sort((a, b) => (b.barcodeImage ? 1 : 0) - (a.barcodeImage ? 1 : 0))
     .slice(0, maxImages);

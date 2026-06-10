@@ -74,11 +74,10 @@ export async function mergeProductData(page, offProduct, imageData = null) {
   if (offProduct.nova_group != null) merged.nova_group = offProduct.nova_group;
   if (offProduct.product_name && !merged.title) merged.title = offProduct.product_name;
 
-  if (hasOffNutrients) {
-    merged.nutritionInferred = false;
-  } else {
-    applyIngredientInference(merged, sources, imageData);
-  }
+  // OFF product found — never fall back to ingredient macro guessing (that
+  // contradicts "Nutrition from Open Food Facts" even when OFF nutriments are sparse).
+  merged.offEnriched = true;
+  merged.nutritionInferred = false;
 
   return { merged, sources };
 }

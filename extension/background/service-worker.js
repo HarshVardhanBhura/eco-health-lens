@@ -4,7 +4,7 @@
 
 import { API_BASE_URL } from '../shared/config.js';
 
-const CACHE_PREFIX = 'analysis:v33:';
+const CACHE_PREFIX = 'analysis:v34:';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** @type {number | null} Tab that owns the open side panel */
