@@ -1,4 +1,5 @@
 import { fetchFirstByBarcodes } from '../services/openFoodFacts.js';
+import { extractBarcodesFromBuffers, offHasUsableNutrition } from '../services/barcodeScan.js';
 import { extractFromProductImages } from '../services/imageOcr.js';
 import { mergeProductData } from '../services/merge.js';
 import { detectProductType } from '../scoring/detectProductType.js';
@@ -80,30 +81,64 @@ export async function analyzeProduct(payload) {
   const richPageData =
     pageNutritionFields >= 4 && (payload.ingredientsText || '').length > 15;
 
+  const hasBuffers = (payload.productImageBuffers || []).length > 0;
+  const skipHeavyOcr = payload.skipImageOcr === true;
+
+  /** @type {string[]} */
+  const barcodesToTry = [...new Set([payload.barcode].filter(Boolean))];
+  let offHit = barcodesToTry.length ? await fetchFirstByBarcodes(barcodesToTry) : null;
+
+  // Fast barcode scan from pack photos before heavy nutrition-table OCR.
+  if (!offHit && likelyFood && hasBuffers && !skipHeavyOcr) {
+    const quickScan = await extractBarcodesFromBuffers(payload.productImageBuffers, {
+      maxImages: 4,
+    });
+    for (const b of [quickScan.barcode, ...(quickScan.barcodes || [])].filter(Boolean)) {
+      if (!barcodesToTry.includes(b)) barcodesToTry.push(b);
+    }
+    if (barcodesToTry.length > (payload.barcode ? 1 : 0)) {
+      offHit = await fetchFirstByBarcodes(barcodesToTry);
+    }
+    if (quickScan.barcode && !imageData) {
+      imageData = {
+        barcode: quickScan.barcode,
+        barcodes: quickScan.barcodes,
+        sources: quickScan.sources,
+        text: '',
+        ocrAttempted: true,
+        ocrImageCount: 0,
+      };
+    }
+  }
+
+  let offProduct = offHit?.product || null;
+  const offSufficient = offHasUsableNutrition(offProduct);
+
   const runImageOcr =
+    !skipHeavyOcr &&
     !richPageData &&
+    !offSufficient &&
     (likelyFood ||
       payload.ocrSelectedOnly === true ||
       payload.forceImageOcr === true);
 
-  if (runImageOcr && (payload.productImages?.length || payload.productImageBuffers?.length)) {
-    imageData = await extractFromProductImages(payload.productImages || [], {
+  if (runImageOcr && (payload.productImages?.length || hasBuffers)) {
+    const fullOcr = await extractFromProductImages(payload.productImages || [], {
       selectedImageUrl: payload.selectedImageUrl,
       imageBuffers: payload.productImageBuffers,
       ocrSelectedOnly: payload.ocrSelectedOnly === true,
       autoNutritionOcr: payload.autoNutritionOcr === true,
-      ocrBudgetMs: 28_000,
+      ocrBudgetMs: offHit ? 18_000 : 28_000,
     });
+    imageData = fullOcr || imageData;
+    for (const b of [imageData?.barcode, ...(imageData?.barcodes || [])].filter(Boolean)) {
+      if (!barcodesToTry.includes(b)) barcodesToTry.push(b);
+    }
+    if (!offHit && barcodesToTry.length) {
+      offHit = await fetchFirstByBarcodes(barcodesToTry);
+      offProduct = offHit?.product || offProduct;
+    }
   }
-
-  const barcodesToTry = [
-    payload.barcode,
-    imageData?.barcode,
-    ...(imageData?.barcodes || []),
-  ].filter(Boolean);
-
-  const offHit = barcodesToTry.length ? await fetchFirstByBarcodes(barcodesToTry) : null;
-  const offProduct = offHit?.product || null;
 
   const { merged, sources } = await mergeProductData(payload, offProduct, imageData);
   const productType = detectProductType(merged);

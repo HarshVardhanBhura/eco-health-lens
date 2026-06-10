@@ -644,6 +644,20 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
       }
     }
 
+    for (const img of gallerySweep
+      .filter((i) => /barcode|back\s*of|ean|gtin/i.test(i.alt || ''))
+      .slice(0, 2)) {
+      const id = amazonImageId(img.url);
+      if (queue.some((q) => amazonImageId(q.url) === id)) continue;
+      queue.push({
+        url: img.url,
+        alt: img.alt,
+        priority: 4800,
+        nutritionImage: false,
+        barcodeImage: true,
+      });
+    }
+
     for (const img of ingredients.slice(0, 1)) {
       const id = amazonImageId(img.url);
       if (queue.some((q) => amazonImageId(q.url) === id)) continue;
@@ -753,6 +767,7 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
         alt: img.alt || '',
         url: img.url,
         nutritionImage,
+        barcodeImage: Boolean(img.barcodeImage),
         clarity,
       });
     } catch (e) {
@@ -965,8 +980,43 @@ function requestAnalysis(payload, forceRefresh = false) {
   });
 }
 
+function stripImagesForQuickAnalyze(payload) {
+  return {
+    ...payload,
+    productImages: undefined,
+    productImageBuffers: undefined,
+    productImageClarity: undefined,
+    skipImageOcr: true,
+    autoNutritionOcr: false,
+  };
+}
+
+function isGoodEnoughResult(result) {
+  if (!result) return false;
+  if (result.enrichment?.offMatched) return true;
+  if (result.enrichment?.nutritionSource === 'label_ocr') return true;
+  if (result.enrichment?.nutritionSource === 'page' && result.confidence !== 'low') return true;
+  if (
+    result.health?.total != null &&
+    result.enrichment?.nutritionSource !== 'ingredient_estimate'
+  ) {
+    return true;
+  }
+  return false;
+}
+
+async function requestAnalysisWithRetry(payload, forceRefresh = false) {
+  let result = await requestAnalysis(payload, forceRefresh);
+  if (!result) {
+    await new Promise((r) => setTimeout(r, 2500));
+    result = await requestAnalysis(payload, true);
+  }
+  return result;
+}
+
 async function run() {
   setBadgeLoading();
+  chrome.runtime.sendMessage({ type: 'WAKE_BACKEND' }).catch(() => {});
   const initialBadge = ensureBadge();
   if (!initialBadge) {
     // Some Amazon layouts render title late; retry briefly before giving up.
@@ -998,8 +1048,18 @@ async function run() {
   if (richPageData) {
     console.info('[EcoHealth] page already has nutrition + ingredients — skipping gallery OCR');
   }
-  if (fetchOcrImages && !richPageData && (payload.productImages?.length || payload.selectedImageUrl)) {
+  // Phase 1: page text + Amazon barcode → Open Food Facts (no image upload).
+  let result = await requestAnalysisWithRetry(stripImagesForQuickAnalyze(payload));
+  if (result?.enrichment?.offMatched) {
+    console.info('[EcoHealth] OFF hit (page barcode):', result.enrichment.barcode);
+  }
+
+  const needsImagePass =
+    fetchOcrImages && !richPageData && !isGoodEnoughResult(result);
+
+  if (needsImagePass) {
     payload.autoNutritionOcr = true;
+    payload.skipImageOcr = false;
     payload.productImageBuffers = await fetchImagesForOcr(
       payload.productImages || [],
       payload.selectedImageUrl,
@@ -1017,14 +1077,12 @@ async function run() {
         payload.productImageBuffers.map((b) => amazonImageId(b.url)).filter(Boolean).join(', ')
       );
     }
-    if (payload.selectedImageUrl) {
-      console.info(
-        '[EcoHealth] landing image for OCR:',
-        toFullResAmazonImageUrl(payload.selectedImageUrl).slice(-60)
-      );
+    result = await requestAnalysisWithRetry(payload, true);
+    if (result?.enrichment?.offMatched) {
+      console.info('[EcoHealth] OFF hit (pack barcode):', result.enrichment.barcode);
     }
   }
-  const result = await requestAnalysis(payload);
+
   lastAnalysis = { result, payload };
   updateBadge(result, result ? 'done' : 'failed');
   if (result?.enrichment) {

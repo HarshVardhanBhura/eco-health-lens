@@ -4,7 +4,7 @@
 
 import { API_BASE_URL } from '../shared/config.js';
 
-const CACHE_PREFIX = 'analysis:v32:';
+const CACHE_PREFIX = 'analysis:v33:';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** @type {number | null} Tab that owns the open side panel */
@@ -260,6 +260,11 @@ function openSidePanelNow(tabId) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === 'WAKE_BACKEND') {
+    wakeBackend().then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   if (message.type === 'ANALYZE_PRODUCT') {
     const tabId = sender.tab?.id;
     analyzeProduct(message.payload, tabId, Boolean(message.forceRefresh))
