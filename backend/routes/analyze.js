@@ -108,6 +108,9 @@ export async function analyzeProduct(payload) {
   const { merged, sources } = await mergeProductData(payload, offProduct, imageData);
   const productType = detectProductType(merged);
   const confidence = computeConfidence(merged, sources);
+  const labelNutritionConfident =
+    Boolean(merged.nutrition?._fromImage) ||
+    isConfidentLabelNutrition(merged.nutrition, imageData?.text || '');
 
   const additiveResult = scoreAdditives(merged.ingredientsText || '');
   let ingredients =
@@ -204,10 +207,6 @@ export async function analyzeProduct(payload) {
       result.message ||
       'No nutrition table found — health score uses ingredients and heuristics only.';
   }
-
-  const labelNutritionConfident =
-    Boolean(merged.nutrition?._fromImage) ||
-    isConfidentLabelNutrition(merged.nutrition, imageData?.text || '');
 
   result.enrichment = {
     barcode: merged.barcode || offHit?.barcode || null,
