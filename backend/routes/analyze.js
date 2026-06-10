@@ -66,7 +66,18 @@ export async function analyzeProduct(payload) {
   if (hit) return hit;
 
   let imageData = null;
-  if (payload.productImages?.length || payload.productImageBuffers?.length) {
+  const likelyFood =
+    detectProductType(payload) !== 'non_food' ||
+    Boolean(payload.nutrition) ||
+    (payload.ingredientsText || '').length > 10 ||
+    payload.rawHints?.hasNutrition ||
+    payload.rawHints?.hasIngredients;
+  const runImageOcr =
+    likelyFood ||
+    payload.ocrSelectedOnly === true ||
+    payload.forceImageOcr === true;
+
+  if (runImageOcr && (payload.productImages?.length || payload.productImageBuffers?.length)) {
     imageData = await extractFromProductImages(payload.productImages || [], {
       selectedImageUrl: payload.selectedImageUrl,
       imageBuffers: payload.productImageBuffers,

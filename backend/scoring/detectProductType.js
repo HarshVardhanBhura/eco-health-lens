@@ -10,6 +10,30 @@ const FOOD_CATEGORY_KEYWORDS = [
   'health food',
 ];
 
+const NON_FOOD_TITLE_KEYWORDS = [
+  'hat',
+  'cap',
+  'shirt',
+  't-shirt',
+  'pant',
+  'jeans',
+  'dress',
+  'shoe',
+  'sandal',
+  'bag',
+  'wallet',
+  'watch',
+  'phone case',
+  'cable',
+  'charger',
+  'toy',
+  'book',
+  'furniture',
+  'pillow',
+  'towel',
+  'bucket hat',
+];
+
 const FOOD_TITLE_KEYWORDS = [
   'biscuit',
   'cookie',
@@ -51,8 +75,11 @@ export function detectProductType(payload) {
 
   const categoryFood = FOOD_CATEGORY_KEYWORDS.some((k) => category.includes(k));
   const titleFood = FOOD_TITLE_KEYWORDS.some((k) => title.includes(k));
+  const titleNonFood = NON_FOOD_TITLE_KEYWORDS.some((k) => title.includes(k));
   const hasNutrition = Boolean(hints.hasNutrition || payload.nutrition);
   const hasIngredients = Boolean(hints.hasIngredients || (payload.ingredientsText || '').length > 10);
+
+  if (titleNonFood && !hasNutrition && !hasIngredients && !categoryFood) return 'non_food';
 
   const foodSignals = [categoryFood, titleFood, hasNutrition, hasIngredients].filter(Boolean).length;
 

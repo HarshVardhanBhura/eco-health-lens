@@ -812,8 +812,28 @@ function scoreBand(score) {
   return 'band-high';
 }
 
-function displayScore(result) {
-  if (!result) return { score: '?', band: 'loading', label: 'Analyzing…', icon: '…' };
+function shouldFetchImagesForOcr(payload) {
+  if (!payload) return false;
+  if (payload.nutrition || (payload.ingredientsText || '').length > 10) return true;
+  if (payload.rawHints?.hasNutrition || payload.rawHints?.hasIngredients) return true;
+  const title = (payload.title || '').toLowerCase();
+  const category = (payload.category || '').toLowerCase();
+  const nonFood = /\b(hat|cap|shirt|pant|jeans|dress|shoe|sandal|bag|wallet|watch|toy|book|furniture|pillow|towel|cable|charger)\b/i;
+  const food =
+    /\b(biscuit|cookie|snack|cereal|juice|milk|chocolate|tea|coffee|rice|dal|atta|flour|oil|ghee|namkeen|chips|noodles|sauce|jam|honey|spice|masala|pickle|powder)\b/i;
+  const categoryFood = /grocery|food|snack|beverage|drink|breakfast|cooking/.test(category);
+  if (nonFood.test(title) && !food.test(title) && !categoryFood) return false;
+  if (food.test(title) || categoryFood) return true;
+  return true;
+}
+
+function displayScore(result, phase = 'done') {
+  if (!result) {
+    if (phase === 'loading') {
+      return { score: '…', band: 'loading', label: 'Analyzing…', icon: '…' };
+    }
+    return { score: '!', band: 'band-mid', label: 'Unavailable', icon: '⚠' };
+  }
   const isFood = result.productType === 'food' || result.productType === 'ambiguous';
   if (isFood && result.health) {
     return {
@@ -825,7 +845,7 @@ function displayScore(result) {
   }
   if (result.eco) {
     if (result.eco.insufficientData || result.eco.total == null) {
-      return { score: 'N/A', band: 'loading', label: 'No eco data', icon: '?' };
+      return { score: 'N/A', band: 'band-mid', label: 'No eco data', icon: '?' };
     }
     return {
       score: String(result.eco.total),
@@ -892,11 +912,11 @@ function ensureBadge() {
   return badgeEl;
 }
 
-function updateBadge(result) {
+function updateBadge(result, phase = 'done') {
   const badge = ensureBadge();
   if (!badge) return;
 
-  const { score, band, label, icon } = displayScore(result);
+  const { score, band, label, icon } = displayScore(result, phase);
   const circle = badge.querySelector('.ecohealth-score-circle');
   const labelEl = badge.querySelector('.ecohealth-label');
   if (circle) {
@@ -907,7 +927,7 @@ function updateBadge(result) {
 }
 
 function setBadgeLoading() {
-  updateBadge(null);
+  updateBadge(null, 'loading');
 }
 
 // --- content-script.js ---
@@ -963,7 +983,11 @@ async function run() {
   }
 
   console.info('[EcoHealth] images sent:', payload.productImages?.length ?? 0);
-  if (payload.productImages?.length || payload.selectedImageUrl) {
+  const fetchOcrImages = shouldFetchImagesForOcr(payload);
+  if (!fetchOcrImages) {
+    console.info('[EcoHealth] skipping gallery OCR for non-food listing');
+  }
+  if (fetchOcrImages && (payload.productImages?.length || payload.selectedImageUrl)) {
     payload.autoNutritionOcr = true;
     payload.productImageBuffers = await fetchImagesForOcr(
       payload.productImages || [],
@@ -991,7 +1015,7 @@ async function run() {
   }
   const result = await requestAnalysis(payload);
   lastAnalysis = { result, payload };
-  updateBadge(result);
+  updateBadge(result, result ? 'done' : 'failed');
   if (result?.enrichment) {
     console.info(
       '[EcoHealth] nutrition:',
