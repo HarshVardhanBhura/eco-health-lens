@@ -1,4 +1,7 @@
-import { inferNutritionFromIngredients } from '../scoring/ingredientInference.js';
+import {
+  inferNutritionFromIngredients,
+  hasRichIngredientList,
+} from '../scoring/ingredientInference.js';
 import {
   parseBestNutritionBlock,
   nutritionFieldCount,
@@ -40,7 +43,7 @@ export async function mergeProductData(page, offProduct, imageData = null) {
   applyPageNutritionText(merged, page);
 
   if (!offProduct) {
-    applyIngredientInference(merged, sources, imageData);
+    applyIngredientInference(merged, sources, imageData, page);
     return { merged, sources };
   }
 
@@ -195,17 +198,24 @@ function shouldSkipIngredientInference(merged, imageData) {
   return ocrIng || ocrNut;
 }
 
-function applyIngredientInference(merged, sources, imageData = null) {
+function applyIngredientInference(merged, sources, imageData = null, page = null) {
   if (shouldSkipIngredientInference(merged, imageData)) return;
-  // Pack OCR was attempted but no official label table — do not substitute guesses.
+  // Pack photos were uploaded — never substitute macro guesses if label OCR did not succeed.
   if (
-    imageData?.ocrAttempted &&
-    !hasLabelNutrition(merged.nutrition) &&
-    (imageData.ocrBudgetExceeded || imageData.ocrImageCount > 0)
+    (page?.productImageBuffers?.length || page?.productImages?.length) &&
+    !hasLabelNutrition(merged.nutrition)
   ) {
     return;
   }
+  // Pack OCR was attempted but no official label table — do not substitute guesses.
+  if (imageData?.ocrAttempted && !hasLabelNutrition(merged.nutrition)) {
+    return;
+  }
+  if (imageData?.sources?.includes('product_image_ocr') && !hasLabelNutrition(merged.nutrition)) {
+    return;
+  }
   if (!merged.ingredientsText) return;
+  if (!hasRichIngredientList(merged.ingredientsText)) return;
   const inferred = inferNutritionFromIngredients(merged.ingredientsText, merged.packWeightG);
   if (!inferred) return;
   merged.nutrition = inferred;

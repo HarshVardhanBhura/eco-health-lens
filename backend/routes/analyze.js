@@ -11,6 +11,7 @@ import { hasRichIngredientList } from '../scoring/ingredientInference.js';
 import { buildMultiVariantAnalysis } from '../scoring/variants.js';
 import {
   isConfidentLabelNutrition,
+  isValidEan13,
   nutritionFieldCount,
   hasPackLabelSection,
   hasFullNutritionTable,
@@ -85,13 +86,22 @@ export async function analyzeProduct(payload) {
   const skipHeavyOcr = payload.skipImageOcr === true;
 
   /** @type {string[]} */
-  const barcodesToTry = [...new Set([payload.barcode].filter(Boolean))];
+  const pageBarcode =
+    payload.barcode &&
+    /^\d{8,14}$/.test(payload.barcode) &&
+    (payload.barcode.length !== 13 || isValidEan13(payload.barcode))
+      ? payload.barcode
+      : null;
+  if (payload.barcode && !pageBarcode) {
+    console.warn('[EcoHealth] ignoring invalid page barcode:', payload.barcode);
+  }
+  const barcodesToTry = [...new Set([pageBarcode].filter(Boolean))];
   let offHit = barcodesToTry.length ? await fetchFirstByBarcodes(barcodesToTry) : null;
 
   // Fast barcode scan from pack photos before heavy nutrition-table OCR.
   if (!offHit && likelyFood && hasBuffers && !skipHeavyOcr) {
     const quickScan = await extractBarcodesFromBuffers(payload.productImageBuffers, {
-      maxImages: 6,
+      maxImages: 8,
     });
     for (const b of [quickScan.barcode, ...(quickScan.barcodes || [])].filter(Boolean)) {
       if (!barcodesToTry.includes(b)) barcodesToTry.push(b);
@@ -188,6 +198,15 @@ export async function analyzeProduct(payload) {
     result.confidence = 'medium';
   } else if (showHealth) {
     result.health = buildHealthScore(merged, additiveResult);
+    const macroCount = result.health.components?.macros?.items?.length || 0;
+    const hasRichNutrition =
+      Boolean(offProduct) ||
+      labelNutritionConfident ||
+      merged.nutritionInferred ||
+      macroCount >= 2;
+    if (confidence === 'low' && !hasRichNutrition) {
+      result.health.insufficientData = true;
+    }
   }
   if (showEco) {
     result.eco = buildEcoScore(merged);
@@ -231,6 +250,33 @@ export async function analyzeProduct(payload) {
       'Limited product data — a full ingredient list or nutrition table on the listing improves accuracy.';
   } else if (confidence === 'low') {
     result.message = 'Limited product data — scores may be incomplete.';
+  }
+
+  if (productType === 'food' && confidence === 'low' && !result.variants?.length) {
+    /** @type {string[]} */
+    const tips = [];
+    if (!offProduct && barcodesToTry.length) {
+      tips.push(
+        'This barcode is not in Open Food Facts — we try to read nutrition from pack photos when available.'
+      );
+    } else if (!offProduct) {
+      tips.push('No product barcode found on this page — select a pack photo showing the barcode.');
+    }
+    if (imageData?.ocrAttempted && !labelNutritionConfident && !merged.packLabelRead) {
+      tips.push(
+        'Click the nutrition facts thumbnail in the product gallery, then refresh the page.'
+      );
+    } else if (!imageData?.ocrAttempted && !labelNutritionConfident) {
+      tips.push(
+        'Select a gallery image showing the back-of-pack nutrition table for a better read.'
+      );
+    }
+    if ((merged.ingredientsText || '').length < 20) {
+      tips.push(
+        'This Amazon listing has little or no ingredient list — expand Ingredients on the page if available.'
+      );
+    }
+    if (tips.length) result.tips = tips;
   }
   if (
     showHealth &&

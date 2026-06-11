@@ -67,6 +67,15 @@ function findLabeledValue(haystack, labels) {
   return '';
 }
 
+function isValidEan13(code) {
+  if (!/^\d{13}$/.test(code)) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) {
+    sum += Number(code[i]) * (i % 2 === 0 ? 1 : 3);
+  }
+  return (10 - (sum % 10)) % 10 === Number(code[12]);
+}
+
 function extractBarcode(selectors) {
   const containers = [
     ...(selectors.detailBullets || []),
@@ -79,14 +88,31 @@ function extractBarcode(selectors) {
       blob += '\n' + (el.textContent || '');
     });
   }
+  /** @type {string[]} */
+  const candidates = [];
   const labels = selectors.barcodeLabels || ['ean', 'upc', 'barcode', 'gtin'];
   for (const label of labels) {
     const re = new RegExp(`${label}[^\\d]*(\\d{8,14})`, 'i');
     const m = blob.match(re);
-    if (m) return m[1];
+    if (m) candidates.push(m[1]);
   }
-  const any = blob.match(/\b(\d{13}|\d{12}|\d{8})\b/);
-  return any ? any[1] : '';
+  for (const raw of blob.match(/\b890[\d\s]{10,11}\d\b/g) || []) {
+    const digits = raw.replace(/\s/g, '');
+    if (digits.length === 13) candidates.push(digits);
+  }
+  for (const m of blob.match(/890\d{10}/g) || []) {
+    candidates.push(m);
+  }
+
+  const unique = [...new Set(candidates)];
+  const validIndia = unique.filter((c) => c.length === 13 && c.startsWith('890') && isValidEan13(c));
+  if (validIndia.length) return validIndia[0];
+
+  const validEan = unique.filter((c) => c.length === 13 && isValidEan13(c));
+  if (validEan.length) return validEan[0];
+
+  // Avoid random 13-digit Amazon page noise (model numbers, etc.).
+  return '';
 }
 
 function sanitizePageIngredients(text) {
@@ -278,10 +304,10 @@ function resolveAmazonImageUrl(img) {
 }
 
 function extractProductImages() {
-  /** @type {Map<string, { url: string, alt: string, priority?: number, score: number }>} */
+  /** @type {Map<string, { url: string, alt: string, priority?: number, score: number, galleryIndex?: number }>} */
   const byImageId = new Map();
 
-  const addImage = (url, alt, extraPriority = 0) => {
+  const addImage = (url, alt, extraPriority = 0, galleryIndex = undefined) => {
     if (!url || url.includes('sprite') || url.includes('gif') || url.includes('.svg')) return;
     const full = toFullResAmazonImageUrl(url);
     const id = amazonImageId(full) || full;
@@ -293,15 +319,30 @@ function extractProductImages() {
         alt: alt || prev?.alt || '',
         priority: Math.max(prev?.priority || 0, extraPriority),
         score,
+        galleryIndex:
+          galleryIndex != null
+            ? galleryIndex
+            : prev?.galleryIndex,
       });
     }
   };
 
+  let thumbIndex = 0;
+  document.querySelectorAll('#altImages li').forEach((li) => {
+    const img = li.querySelector('img');
+    if (!img) return;
+    const url = resolveAmazonImageUrl(img);
+    const alt = (img.alt || img.getAttribute('title') || '').trim();
+    addImage(url, alt, 0, thumbIndex);
+    thumbIndex += 1;
+  });
+
   document
     .querySelectorAll(
-      '#altImages img, #imageBlock img, #imgTagWrapperId img, #ivImagesTab img, .imageThumbnail img'
+      '#imageBlock img, #imgTagWrapperId img, #ivImagesTab img, .imageThumbnail img'
     )
     .forEach((img) => {
+      if (img.closest('#altImages')) return;
       const url = resolveAmazonImageUrl(img);
       const alt = (img.alt || img.getAttribute('title') || '').trim();
       addImage(url, alt, 0);
@@ -320,12 +361,19 @@ function extractProductImages() {
   }
 
   return [...byImageId.values()]
-    .sort(
-      (a, b) =>
-        (b.priority || 0) + b.score - ((a.priority || 0) + a.score)
-    )
+    .sort((a, b) => {
+      if (a.galleryIndex != null && b.galleryIndex != null) {
+        return a.galleryIndex - b.galleryIndex;
+      }
+      return (b.priority || 0) + b.score - ((a.priority || 0) + a.score);
+    })
     .slice(0, 12)
-    .map(({ url, alt, priority }) => ({ url, alt, priority }));
+    .map(({ url, alt, priority, galleryIndex }) => ({
+      url,
+      alt,
+      priority,
+      galleryIndex,
+    }));
 }
 
 function extractNutritionPageText(selectors) {
@@ -451,7 +499,7 @@ function extractRawHints(ingredientsText, nutrition, materialsText) {
   };
 }
 
-const MAX_OCR_FETCH = 3;
+const MAX_OCR_FETCH = 5;
 const MAX_OCR_BYTES = 2_500_000;
 
 /**
@@ -551,10 +599,75 @@ function isIngredientsGalleryImage(alt) {
 }
 
 /**
+ * Reserve slots for barcode scans — nutrition images used to crowd them out.
+ * @param {Array<{ url: string, barcodeImage?: boolean, nutritionImage?: boolean }>} ranked
+ * @param {number} limit
+ */
+function pickBalancedOcrQueue(ranked, limit) {
+  const barcodeOnly = ranked.filter((q) => q.barcodeImage && !q.nutritionImage);
+  const dual = ranked.filter((q) => q.barcodeImage && q.nutritionImage);
+  const nutritionOnly = ranked.filter((q) => q.nutritionImage && !q.barcodeImage);
+  const rest = ranked.filter((q) => !q.barcodeImage && !q.nutritionImage);
+
+  /** @type {typeof ranked} */
+  const picked = [];
+  const seen = new Set();
+  const push = (items) => {
+    for (const item of items) {
+      if (picked.length >= limit) return;
+      const id = amazonImageId(item.url) || item.url;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      picked.push(item);
+    }
+  };
+
+  push(barcodeOnly.slice(0, 2));
+  push(dual.slice(0, 2));
+  push(nutritionOnly.slice(0, 3));
+  push(rest.slice(0, 1));
+  push(ranked);
+  return picked.slice(0, limit);
+}
+
+/**
  * Rank gallery images for automatic nutrition-table OCR (no user click).
  * @param {Array<{ url: string, alt?: string, priority?: number }>} images
  * @param {string} [landingImageUrl]
  */
+/**
+ * Amazon IN packs: 2nd thumb ≈ nutrition table, 4th ≈ barcode (alt text is usually empty).
+ * @param {Array<{ url: string, alt?: string, galleryIndex?: number }>} images
+ * @param {Array<{ url: string, alt: string, priority: number, nutritionImage?: boolean, barcodeImage?: boolean }>} queue
+ */
+function queueGalleryPositionTargets(images, queue) {
+  const byIdx = (images || [])
+    .filter((i) => i.galleryIndex != null)
+    .sort((a, b) => a.galleryIndex - b.galleryIndex);
+
+  const push = (img, opts) => {
+    const id = amazonImageId(img.url);
+    if (queue.some((q) => amazonImageId(q.url) === id)) return;
+    queue.push({
+      url: img.url,
+      alt: img.alt || '',
+      priority: opts.priority,
+      nutritionImage: opts.nutritionImage,
+      barcodeImage: opts.barcodeImage,
+    });
+  };
+
+  for (const img of byIdx.filter((i) => i.galleryIndex === 1)) {
+    push(img, { priority: 5700, nutritionImage: true, barcodeImage: false });
+  }
+  for (const img of byIdx.filter((i) => i.galleryIndex === 3)) {
+    push(img, { priority: 5650, nutritionImage: true, barcodeImage: true });
+  }
+  for (const img of byIdx.filter((i) => i.galleryIndex === 2 || i.galleryIndex === 4)) {
+    push(img, { priority: 5350, nutritionImage: true, barcodeImage: true });
+  }
+}
+
 function rankImagesForAutoNutritionOcr(images, landingImageUrl) {
   const landingId = amazonImageId(landingImageUrl || '');
   const scored = (images || []).map((img) => {
@@ -611,14 +724,17 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
     queue.push({
       url: toFullResAmazonImageUrl(landingImageUrl),
       alt: 'Main viewer (selected)',
-      priority: 2000,
+      priority: 5000,
       nutritionImage: true,
+      barcodeImage: true,
     });
   } else if (autoNutrition) {
     const { nutrition, ingredients, landingId, gallerySweep } = rankImagesForAutoNutritionOcr(
       images,
       landingImageUrl
     );
+
+    queueGalleryPositionTargets(images, queue);
 
     // Label-first: only queue likely nutrition-table images (max 3). Skipping
     // generic gallery sweeps keeps OCR within Render's ~30s request limit.
@@ -652,8 +768,21 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
       queue.push({
         url: img.url,
         alt: img.alt,
-        priority: 4800,
+        priority: 5200,
         nutritionImage: false,
+        barcodeImage: true,
+      });
+    }
+
+    // Fallback: any later gallery thumbs not already queued (by score, not position).
+    for (const img of gallerySweep.filter((i) => !i.isLanding).slice(0, 4)) {
+      const id = amazonImageId(img.url);
+      if (queue.some((q) => amazonImageId(q.url) === id)) continue;
+      queue.push({
+        url: img.url,
+        alt: img.alt || 'gallery back',
+        priority: 5100,
+        nutritionImage: true,
         barcodeImage: true,
       });
     }
@@ -724,13 +853,26 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
     })
     .sort((a, b) => b.priority - a.priority);
 
+  if (autoNutrition && ranked.length) {
+    console.info(
+      '[EcoHealth] OCR queue:',
+      ranked.map((q) => ({
+        id: amazonImageId(q.url) || '—',
+        nutrition: Boolean(q.nutritionImage),
+        barcode: Boolean(q.barcodeImage),
+      }))
+    );
+  }
+
   /** @type {Array<{ base64: string, mimeType: string, alt: string, url: string }>} */
   const buffers = [];
 
-  const maxFetch = selectedOnly ? 1 : MAX_OCR_FETCH;
-  const maxBuffers = selectedOnly ? 1 : autoNutrition ? 3 : 3;
+  const maxBuffers = selectedOnly ? 1 : autoNutrition ? 6 : 3;
+  const toFetch = selectedOnly
+    ? ranked.slice(0, 1)
+    : pickBalancedOcrQueue(ranked, maxBuffers);
 
-  for (const img of ranked.slice(0, maxFetch)) {
+  for (const img of toFetch) {
     if (buffers.length >= maxBuffers) break;
     try {
       const res = await fetch(img.url, { credentials: 'same-origin', mode: 'cors' });
@@ -746,8 +888,15 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
           isNutritionGalleryImage(img.alt, img.url)
       );
       const clarityBefore = await measureImageBlob(blob, img.url);
-      // Label contrast/threshold runs on backend (sharp) — double preprocessing breaks table OCR.
-      const clarity = clarityBefore;
+      const needsLabelBoost =
+        Boolean(img.nutritionImage || img.barcodeImage) &&
+        (clarityBefore.rating === 'low' ||
+          clarityBefore.rating === 'ok' ||
+          clarityBefore.width < 1200);
+      if (needsLabelBoost) {
+        blob = await preprocessImageForOcr(blob);
+      }
+      const clarity = needsLabelBoost ? await measureImageBlob(blob, img.url) : clarityBefore;
       const { base64, mimeType } = await blobToBase64(blob);
       const id = amazonImageId(img.url) || img.url.slice(-24);
       console.info('[EcoHealth] image clarity:', id, {
@@ -845,15 +994,39 @@ function shouldFetchImagesForOcr(payload) {
   return true;
 }
 
+function hasReliableScoreData(result) {
+  if (!result?.health || result.health.insufficientData) return false;
+  const en = result.enrichment;
+  if (en?.offMatched) return true;
+  if (en?.nutritionSource === 'label_ocr' || en?.nutritionSource === 'pack_label_partial') return true;
+  if ((result.health.components?.macros?.items?.length || 0) >= 2) return true;
+  if (result.confidence === 'high') return true;
+  if (result.confidence === 'medium' && (result.health.components?.macros?.items?.length || 0) >= 1) {
+    return true;
+  }
+  return false;
+}
+
 function displayScore(result, phase = 'done') {
   if (!result) {
-    if (phase === 'loading') {
-      return { score: '…', band: 'loading', label: 'Analyzing…', icon: '…' };
+    if (phase === 'loading' || phase === 'refining') {
+      return {
+        score: '…',
+        band: 'loading',
+        label: phase === 'refining' ? 'Reading label…' : 'Analyzing…',
+        icon: phase === 'refining' ? '📋' : '…',
+      };
     }
     return { score: '!', band: 'band-mid', label: 'Unavailable', icon: '⚠' };
   }
   const isFood = result.productType === 'food' || result.productType === 'ambiguous';
   if (isFood && result.health) {
+    if (phase === 'refining' && !hasReliableScoreData(result)) {
+      return { score: '…', band: 'loading', label: 'Reading label…', icon: '📋' };
+    }
+    if (!hasReliableScoreData(result)) {
+      return { score: '?', band: 'band-mid', label: 'Limited data', icon: '?' };
+    }
     return {
       score: String(result.health.total),
       band: scoreBand(result.health.total),
@@ -1049,32 +1222,53 @@ async function run() {
     console.info('[EcoHealth] OFF hit (page barcode):', result.enrichment.barcode);
   }
 
+  const phase1Result = result;
+  lastAnalysis = { result: phase1Result, payload };
+
   const needsImagePass =
     fetchOcrImages && !richPageData && !isGoodEnoughResult(result);
 
+  if (phase1Result) {
+    updateBadge(phase1Result, needsImagePass ? 'refining' : 'done');
+  }
+
   if (needsImagePass) {
-    payload.autoNutritionOcr = true;
-    payload.skipImageOcr = false;
-    payload.productImageBuffers = await fetchImagesForOcr(
-      payload.productImages || [],
-      payload.selectedImageUrl,
-      { autoNutrition: true }
-    );
-    payload.productImageClarity = (payload.productImageBuffers || []).map((b) => ({
-      imageId: amazonImageId(b.url),
-      url: b.url,
-      ...b.clarity,
-    }));
-    console.info('[EcoHealth] OCR buffers loaded:', payload.productImageBuffers?.length ?? 0);
-    if (payload.productImageBuffers?.length) {
-      console.info(
-        '[EcoHealth] OCR image ids:',
-        payload.productImageBuffers.map((b) => amazonImageId(b.url)).filter(Boolean).join(', ')
+    try {
+      payload.autoNutritionOcr = true;
+      payload.skipImageOcr = false;
+      payload.productImageBuffers = await fetchImagesForOcr(
+        payload.productImages || [],
+        payload.selectedImageUrl,
+        { autoNutrition: true }
       );
-    }
-    result = await requestAnalysisWithRetry(payload, true);
-    if (result?.enrichment?.offMatched) {
-      console.info('[EcoHealth] OFF hit (pack barcode):', result.enrichment.barcode);
+      payload.productImageClarity = (payload.productImageBuffers || []).map((b) => ({
+        imageId: amazonImageId(b.url),
+        url: b.url,
+        ...b.clarity,
+      }));
+      console.info('[EcoHealth] OCR buffers loaded:', payload.productImageBuffers?.length ?? 0);
+      if (payload.productImageBuffers?.length) {
+        console.info(
+          '[EcoHealth] OCR image ids:',
+          payload.productImageBuffers.map((b) => amazonImageId(b.url)).filter(Boolean).join(', ')
+        );
+      }
+      const phase2Result = await Promise.race([
+        requestAnalysisWithRetry(payload, true),
+        new Promise((resolve) => setTimeout(() => resolve(null), 58_000)),
+      ]);
+      if (phase2Result) {
+        result = phase2Result;
+        if (result?.enrichment?.offMatched) {
+          console.info('[EcoHealth] OFF hit (pack barcode):', result.enrichment.barcode);
+        }
+      } else {
+        console.warn('[EcoHealth] image pass timed out — keeping page-only result');
+        result = phase1Result;
+      }
+    } catch (e) {
+      console.warn('[EcoHealth] image pass failed', e);
+      result = phase1Result;
     }
   }
 
@@ -1095,13 +1289,14 @@ async function run() {
   }
 
   startLandingImageWatcher(selectors);
-
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === 'ANALYSIS_UPDATED' && msg.asin === payload.asin) {
-      updateBadge(msg.result);
-    }
-  });
 }
+
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'ANALYSIS_UPDATED' && msg.asin === lastAnalysis.payload?.asin) {
+    lastAnalysis.result = msg.result;
+    updateBadge(msg.result);
+  }
+});
 
 let landingWatcherStarted = false;
 

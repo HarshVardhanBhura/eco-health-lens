@@ -967,12 +967,23 @@ export function parseBestNutritionBlock(text) {
  * @returns {string | null} digits-only barcode
  */
 /**
+ * @param {string} code
+ */
+export function isValidEan13(code) {
+  if (!/^\d{13}$/.test(code)) return false;
+  let sum = 0;
+  for (let i = 0; i < 12; i++) {
+    sum += Number(code[i]) * (i % 2 === 0 ? 1 : 3);
+  }
+  return (10 - (sum % 10)) % 10 === Number(code[12]);
+}
+
+/**
  * @param {string} digits
  */
 function isPlausibleBarcode(digits) {
   if (!/^\d{8,14}$/.test(digits)) return false;
-  if (digits.length === 13 && digits.startsWith('890')) return true;
-  if (digits.length === 13) return true;
+  if (digits.length === 13) return isValidEan13(digits);
   if (digits.length === 8 || digits.length === 12) return true;
   return false;
 }
@@ -999,10 +1010,12 @@ export function extractBarcodeFromText(text) {
 
   const list = [...found];
   if (!list.length) return null;
+  const valid13 = list.filter((b) => b.length === 13 && isValidEan13(b));
+  const pool = valid13.length ? valid13 : list;
   return (
-    list.find((b) => b.length === 13 && b.startsWith('890')) ||
-    list.find((b) => b.length === 13) ||
-    list.sort((a, b) => b.length - a.length)[0]
+    pool.find((b) => b.length === 13 && b.startsWith('890')) ||
+    pool.find((b) => b.length === 13) ||
+    pool.sort((a, b) => b.length - a.length)[0]
   );
 }
 

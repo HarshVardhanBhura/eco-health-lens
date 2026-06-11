@@ -1,3 +1,5 @@
+import { isValidEan13 } from '../scoring/nutritionParse.js';
+
 const OFF_BASE = 'https://world.openfoodfacts.org/api/v2/product';
 
 /**
@@ -11,6 +13,12 @@ const OFF_BASE = 'https://world.openfoodfacts.org/api/v2/product';
 export async function fetchFirstByBarcodes(barcodes) {
   const unique = [...new Set((barcodes || []).filter((b) => /^\d{8,14}$/.test(b)))]
     .sort((a, b) => {
+      const aValid = a.length === 13 && isValidEan13(a);
+      const bValid = b.length === 13 && isValidEan13(b);
+      if (aValid && !bValid) return -1;
+      if (bValid && !aValid) return 1;
+      if (a.startsWith('890') && !b.startsWith('890')) return -1;
+      if (b.startsWith('890') && !a.startsWith('890')) return 1;
       if (a.length === 13 && b.length !== 13) return -1;
       if (b.length === 13 && a.length !== 13) return 1;
       return b.length - a.length;

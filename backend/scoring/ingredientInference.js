@@ -74,9 +74,18 @@ function estimatePer100g(parts) {
     accounted = Math.min(100, accounted + (100 - accounted) * 0.85);
   } else if (accounted < 92) {
     const remainder = 100 - accounted;
-    if (/chocolate|cocoa|biscuit|cookie|snack/.test(parts.map((p) => p.name).join(' '))) {
+    const blob = parts.map((p) => p.name).join(' ');
+    if (/potato|chips|crisp|namkeen|wafers|kurkure/.test(blob)) {
+      carbsPct += remainder * 0.52;
+      fatPct += remainder * 0.38;
+      sugarPct += remainder * 0.04;
+    } else if (/chocolate|cocoa|biscuit|cookie/.test(blob)) {
       sugarPct += remainder * 0.5;
       fatPct += remainder * 0.35;
+    } else if (/snack/.test(blob)) {
+      carbsPct += remainder * 0.45;
+      fatPct += remainder * 0.35;
+      sugarPct += remainder * 0.08;
     } else {
       carbsPct += remainder * 0.4;
       sugarPct += remainder * 0.2;
@@ -112,6 +121,13 @@ function estimatePer100g(parts) {
  */
 export function inferNutritionFromIngredients(ingredientsText, packWeightG) {
   if (!hasRichIngredientList(ingredientsText)) return null;
+  const lower = ingredientsText.toLowerCase();
+  if (
+    /\b(chips|crisp|namkeen|wafers|kurkure|potato)\b/.test(lower) &&
+    !/\(\s*\d+(?:\.\d+)?\s*%/.test(ingredientsText)
+  ) {
+    return null;
+  }
   const parts = parseIngredientParts(ingredientsText);
   const est = estimatePer100g(parts);
   if (!est) return null;

@@ -415,11 +415,24 @@ function render(result) {
   conf.className = `confidence ${result.confidence}`;
 
   const low = $('low-confidence');
-  if (result.message || result.confidence === 'low') {
+  if (result.message || result.confidence === 'low' || result.tips?.length) {
     low.classList.remove('hidden');
-    low.textContent =
+    low.replaceChildren();
+    const main = document.createElement('p');
+    main.textContent =
       result.message ||
       'Limited data available — scores may be incomplete.';
+    low.appendChild(main);
+    if (result.tips?.length) {
+      const ul = document.createElement('ul');
+      ul.className = 'tips-list';
+      for (const tip of result.tips) {
+        const li = document.createElement('li');
+        li.textContent = tip;
+        ul.appendChild(li);
+      }
+      low.appendChild(ul);
+    }
   } else {
     low.classList.add('hidden');
   }
@@ -462,7 +475,10 @@ function render(result) {
 
   if (result.health) {
     $('health-section').classList.remove('hidden');
-    $('health-total').textContent = String(result.health.total);
+    const insufficient = Boolean(result.health.insufficientData);
+    const healthTotal = $('health-total');
+    healthTotal.textContent = insufficient ? '—' : String(result.health.total);
+    healthTotal.classList.toggle('score-na', insufficient);
 
     const labelEl = $('health-score-label');
     const hintEl = $('health-variant-hint');
@@ -484,14 +500,22 @@ function render(result) {
         };
       }
     } else {
-      if (labelEl) labelEl.textContent = 'Health score';
-      hintEl?.classList.add('hidden');
+      if (labelEl) {
+        labelEl.textContent = insufficient ? 'Health score unavailable' : 'Health score';
+      }
+      if (insufficient && hintEl) {
+        hintEl.classList.remove('hidden');
+        hintEl.textContent =
+          'Not enough nutrition or ingredient data for a reliable score on this listing.';
+      } else {
+        hintEl?.classList.add('hidden');
+      }
       $('variants-toggle')?.classList.add('hidden');
       $('variants-section')?.classList.add('hidden');
     }
 
     const grade = $('health-grade');
-    if (result.health.grade) {
+    if (result.health.grade && !insufficient) {
       const prefix = 'Grade';
       wireGradePill(
         grade,

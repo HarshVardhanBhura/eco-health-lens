@@ -4,7 +4,7 @@
 
 import { API_BASE_URL } from '../shared/config.js';
 
-const CACHE_PREFIX = 'analysis:v34:';
+const CACHE_PREFIX = 'analysis:v37:';
 const CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** @type {number | null} Tab that owns the open side panel */
@@ -217,6 +217,15 @@ async function analyzeProduct(payload, tabId, forceRefresh = false) {
     if (cached) {
       if (tabId != null) {
         await setTabAnalysis(tabId, { asin: payload.asin, result: cached, payload });
+        try {
+          chrome.tabs.sendMessage(tabId, {
+            type: 'ANALYSIS_UPDATED',
+            asin: payload.asin,
+            result: cached,
+          });
+        } catch {
+          // Content script may not be ready yet.
+        }
       }
       return cached;
     }
@@ -234,6 +243,15 @@ async function analyzeProduct(payload, tabId, forceRefresh = false) {
 
   if (tabId != null) {
     await setTabAnalysis(tabId, { asin: payload.asin, result, payload });
+    try {
+      chrome.tabs.sendMessage(tabId, {
+        type: 'ANALYSIS_UPDATED',
+        asin: payload.asin,
+        result,
+      });
+    } catch {
+      // Content script may not be ready yet.
+    }
   }
 
   return result;

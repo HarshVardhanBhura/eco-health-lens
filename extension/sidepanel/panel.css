@@ -52,6 +52,19 @@ body {
   background: #fff8e1;
   border-color: #ffe082;
   color: #5d4037;
+  text-align: left;
+}
+
+.state-block.warning .tips-list {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.big-score.score-na {
+  color: var(--muted);
+  font-size: 2.4rem;
 }
 
 .state-block {

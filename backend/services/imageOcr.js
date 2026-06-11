@@ -21,7 +21,7 @@ import { recognizeLabelImage, scoreLabelOcrText } from './labelOcr.js';
 const NUTRITION_ALT_RE =
   /nutrition|ingredient|label|facts|back\s*of|pack|barcode|composition|allergen|per\s*100/i;
 
-const MAX_IMAGES = 5;
+const MAX_IMAGES = 6;
 
 /** Render free tier HTTP requests time out around 30s — stay under this budget. */
 const DEFAULT_OCR_BUDGET_MS = 28_000;
@@ -314,12 +314,32 @@ export async function extractFromProductImages(images, options = {}) {
     if (filtered.length) imageBuffers = filtered;
   }
 
-  imageBuffers = [...imageBuffers].sort(
-    (a, b) => (b.nutritionImage ? 1 : 0) - (a.nutritionImage ? 1 : 0)
-  );
   if (options.autoNutritionOcr && imageBuffers.length) {
-    const labelBuffers = imageBuffers.filter((b) => b.nutritionImage);
-    imageBuffers = (labelBuffers.length ? labelBuffers : imageBuffers).slice(0, 3);
+    const dual = imageBuffers.filter((b) => b.nutritionImage && b.barcodeImage);
+    const nutritionOnly = imageBuffers.filter((b) => b.nutritionImage && !b.barcodeImage);
+    const barcodeOnly = imageBuffers.filter((b) => b.barcodeImage && !b.nutritionImage);
+    const seen = new Set();
+    /** @type {typeof imageBuffers} */
+    const merged = [];
+    const addBuffers = (list, max) => {
+      for (const b of list) {
+        if (merged.length >= MAX_IMAGES) return;
+        const id = amazonImageIdFromUrl(b.url || '') || b.url;
+        if (id && seen.has(id)) continue;
+        if (id) seen.add(id);
+        merged.push(b);
+        if (merged.length >= max) return;
+      }
+    };
+    addBuffers(dual, 2);
+    addBuffers(nutritionOnly, 3);
+    addBuffers(barcodeOnly, 2);
+    if (merged.length) imageBuffers = merged;
+    else imageBuffers = imageBuffers.slice(0, MAX_IMAGES);
+  } else {
+    imageBuffers = [...imageBuffers].sort(
+      (a, b) => (b.nutritionImage ? 1 : 0) - (a.nutritionImage ? 1 : 0)
+    );
   }
 
   let ranked = [...(images || [])]
@@ -393,7 +413,7 @@ export async function extractFromProductImages(images, options = {}) {
       const contentType = bufImg.mimeType || 'image/jpeg';
       if (!isSupportedOcrImage(buffer, contentType)) continue;
 
-      const labelImage = Boolean(bufImg.nutritionImage);
+      const labelImage = Boolean(bufImg.nutritionImage || bufImg.barcodeImage);
       ocrAttempts += 1;
       const rawText = await recognizeWithFallback(
         worker,
@@ -501,10 +521,24 @@ export async function extractFromProductImages(images, options = {}) {
 
     if (ocrAttempts > 0 && ocrSuccess === 0) {
       console.warn('[EcoHealth] OCR: no images could be read — using alt text only');
-      return extractFromImageAltsOnly(ranked);
+      const altOnly = extractFromImageAltsOnly(ranked);
+      if (altOnly) {
+        altOnly.ocrAttempted = true;
+        altOnly.ocrImageCount = 0;
+        altOnly.ocrBudgetExceeded = ocrBudgetExceeded;
+      }
+      return altOnly;
     }
 
-    if (!combinedText.trim()) return extractFromImageAltsOnly(ranked);
+    if (!combinedText.trim()) {
+      const altOnly = extractFromImageAltsOnly(ranked);
+      if (altOnly && ocrAttempts > 0) {
+        altOnly.ocrAttempted = true;
+        altOnly.ocrImageCount = 0;
+        altOnly.ocrBudgetExceeded = ocrBudgetExceeded;
+      }
+      return altOnly;
+    }
 
     let variantBlocks = dedupeNutritionBlocks(perImageBlocks);
     if (variantBlocks.length < 2) {
