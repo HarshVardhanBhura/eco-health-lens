@@ -156,10 +156,14 @@ function applyImageExtraction(merged, sources, imageData) {
   } else if (
     imgNutrition &&
     imgFields >= 2 &&
-    (merged.nutritionInferred || !hasLabelNutrition(merged.nutrition) || imgFields > mergedFields)
+    (merged.nutritionInferred ||
+      !hasLabelNutrition(merged.nutrition) ||
+      imgFields > mergedFields ||
+      (imgFields >= 3 && imgNutrition.energy_kcal != null))
   ) {
     merged.nutrition = { ...imgNutrition, _fromImage: true };
     merged.nutritionInferred = false;
+    if (imgFields >= 3) merged.packLabelRead = true;
   }
 
   if (

@@ -559,12 +559,11 @@ async function measureImageBlob(blob, url = '') {
 async function cropWideImageLabelHalf(blob) {
   try {
     const bmp = await createImageBitmap(blob);
-    const ratio = bmp.width / Math.max(bmp.height, 1);
-    if (ratio < 1.2) {
+    if (bmp.width < 320 || bmp.height < 320) {
       bmp.close();
       return null;
     }
-    const x = Math.floor(bmp.width * 0.4);
+    const x = Math.floor(bmp.width * 0.38);
     const w = bmp.width - x;
     const canvas = document.createElement('canvas');
     canvas.width = w;

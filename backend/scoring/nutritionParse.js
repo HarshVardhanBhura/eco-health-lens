@@ -286,10 +286,20 @@ export function nutritionFingerprint(nutrition) {
  * @param {string} text
  */
 function parseLineBasedNutrition(text) {
-  const idx = text.search(/nutrition/i);
-  if (idx < 0) return null;
-
-  const block = text.slice(idx, idx + 4000);
+  let idx = text.search(/nutrition/i);
+  let block;
+  if (idx < 0) {
+    if (
+      /per\s*100\s*g/i.test(text) &&
+      /energy|protein|carbohydrate|sodium|total\s+fat/i.test(text)
+    ) {
+      block = text.slice(0, 4000);
+    } else {
+      return null;
+    }
+  } else {
+    block = text.slice(idx, idx + 4000);
+  }
   const nutrition = { per: '100g' };
 
   /** @type {Array<{ re: RegExp, key: string }>} */
@@ -965,6 +975,9 @@ export function parseBestNutritionBlock(text) {
   }
   tryParse(text);
   tryParse(text.replace(/\n+/g, ' '));
+
+  const lineBased = parseLineBasedNutrition(text);
+  if (lineBased) candidates.push(lineBased);
 
   const merged = mergeNutritionCandidates(candidates);
   return finalizeParsedNutrition(merged, text);

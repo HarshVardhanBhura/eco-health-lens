@@ -5,7 +5,7 @@ import {
   hasFullNutritionTable,
   isConfidentLabelNutrition,
 } from '../scoring/nutritionParse.js';
-import { preprocessLabelBuffer } from './labelPreprocess.js';
+import { extractLabelRegionBuffers, preprocessLabelBuffer } from './labelPreprocess.js';
 
 /** Stop extra OCR passes once a label parse is this strong. */
 const STRONG_LABEL_SCORE = 80;
@@ -119,23 +119,39 @@ async function collectLabelOcrCandidates(worker, working, url, modes = ['6', '4'
   return candidates;
 }
 
-export async function recognizeLabelImage(worker, buffer, url) {
-  /** @type {Array<{ text: string, score: number, psm: string }>} */
-  let candidates = await collectLabelOcrCandidates(worker, buffer, url, ['6', '4']);
-
+async function collectFromBuffer(worker, buffer, url, modes = ['6', '4']) {
+  let candidates = await collectLabelOcrCandidates(worker, buffer, url, modes);
   if (bestScore(candidates) < STRONG_LABEL_SCORE) {
     const fallback = await collectLabelOcrCandidates(worker, buffer, url, ['11', '3']);
     candidates = [...candidates, ...fallback];
   }
+  return candidates;
+}
+
+export async function recognizeLabelImage(worker, buffer, url) {
+  /** @type {Array<{ text: string, score: number, psm: string }>} */
+  let candidates = [];
+
+  let regions;
+  try {
+    regions = await extractLabelRegionBuffers(buffer);
+  } catch {
+    regions = [buffer];
+  }
+
+  for (let i = 0; i < regions.length; i++) {
+    const regionUrl = `${url}#r${i}`;
+    candidates.push(...(await collectFromBuffer(worker, regions[i], regionUrl)));
+    if (bestScore(candidates) >= STRONG_LABEL_SCORE) break;
+  }
 
   if (bestScore(candidates) < STRONG_LABEL_SCORE) {
     try {
-      const prepped = await preprocessLabelBuffer(buffer);
-      const preCandidates = await collectLabelOcrCandidates(worker, prepped, url, ['6', '4']);
-      candidates = [...candidates, ...preCandidates];
-      if (bestScore(candidates) < STRONG_LABEL_SCORE) {
-        const preFallback = await collectLabelOcrCandidates(worker, prepped, url, ['11', '3']);
-        candidates = [...candidates, ...preFallback];
+      for (let i = 0; i < regions.length; i++) {
+        const prepped = await preprocessLabelBuffer(regions[i]);
+        const regionUrl = `${url}#prep${i}`;
+        candidates.push(...(await collectFromBuffer(worker, prepped, regionUrl)));
+        if (bestScore(candidates) >= STRONG_LABEL_SCORE) break;
       }
     } catch (e) {
       console.warn('[EcoHealth] label preprocess skip:', url.slice(0, 80), e.message || e);
