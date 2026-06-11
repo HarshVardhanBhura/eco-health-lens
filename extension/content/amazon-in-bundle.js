@@ -644,10 +644,15 @@ function pickBalancedOcrQueue(ranked, limit) {
   /** @type {typeof ranked} */
   const picked = [];
   const seen = new Set();
+  const bufferKey = (item) =>
+    item.url?.includes('#label-crop')
+      ? `${amazonImageId(item.url) || item.url}:crop`
+      : amazonImageId(item.url) || item.url;
+
   const push = (items) => {
     for (const item of items) {
       if (picked.length >= limit) return;
-      const id = amazonImageId(item.url) || item.url;
+      const id = bufferKey(item);
       if (seen.has(id)) continue;
       seen.add(id);
       picked.push(item);
@@ -739,8 +744,37 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
   const queue = [];
 
   if (selectedOnly && landingImageUrl) {
+    const fullUrl = toFullResAmazonImageUrl(landingImageUrl);
+    /** @type {Array<{ base64: string, mimeType: string, alt: string, url: string, nutritionImage: boolean, barcodeImage: boolean, clarity: object }>} */
+    const selectedBuffers = [];
+    try {
+      const res = await fetch(fullUrl, { credentials: 'same-origin', mode: 'cors' });
+      if (res.ok) {
+        let blob = await res.blob();
+        if (blob.size >= 400 && blob.size <= MAX_OCR_BYTES) {
+          let ocrBlob = (await cropWideImageLabelHalf(blob)) || blob;
+          ocrBlob = await preprocessImageForOcr(ocrBlob);
+          const clarity = await measureImageBlob(ocrBlob, fullUrl);
+          const { base64, mimeType } = await blobToBase64(ocrBlob);
+          const id = amazonImageId(fullUrl) || 'selected';
+          console.info('[EcoHealth] selected gallery image — label crop for OCR:', id, clarity);
+          selectedBuffers.push({
+            base64,
+            mimeType,
+            alt: 'selected label crop',
+            url: `${fullUrl}#label-crop`,
+            nutritionImage: true,
+            barcodeImage: true,
+            clarity,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[EcoHealth] selected image fetch failed', e);
+    }
+    if (selectedBuffers.length) return selectedBuffers;
     queue.push({
-      url: toFullResAmazonImageUrl(landingImageUrl),
+      url: fullUrl,
       alt: 'Main viewer (selected)',
       priority: 5000,
       nutritionImage: true,
@@ -1380,10 +1414,14 @@ function startLandingImageWatcher(selectors) {
           );
         }
         if (result.enrichment) {
+          if (result.enrichment.ocrTextPreview) {
+            console.info('[EcoHealth] OCR text preview:', result.enrichment.ocrTextPreview);
+          }
           console.info(
             '[EcoHealth] nutrition (re-analyze):',
             result.enrichment.nutritionSource,
-            result.enrichment.parsedNutrition || ''
+            result.enrichment.parsedNutrition || '',
+            `(images OCR: ${result.enrichment.ocrImageCount ?? 0})`
           );
           if (result.enrichment.bestNutritionImageId) {
             console.info('[EcoHealth] best label image:', result.enrichment.bestNutritionImageId);

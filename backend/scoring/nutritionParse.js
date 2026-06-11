@@ -821,7 +821,7 @@ function parseNutritionHeaderCluster(text) {
   );
   if (!m) return null;
   const energy = parseFloat(m[1]);
-  if (energy < 300 || energy > 495) return null;
+  if (energy < 300 || energy > 600) return null;
 
   const nutrition = { per: '100g', energy_kcal: energy };
   const tail = block.slice((m.index || 0) + m[0].length);

@@ -138,7 +138,7 @@ export async function analyzeProduct(payload) {
       imageBuffers: payload.productImageBuffers,
       ocrSelectedOnly: payload.ocrSelectedOnly === true,
       autoNutritionOcr: payload.autoNutritionOcr === true,
-      ocrBudgetMs: offHit ? 18_000 : 28_000,
+      ocrBudgetMs: payload.ocrSelectedOnly ? 24_000 : offHit ? 18_000 : 28_000,
     });
     imageData = fullOcr || imageData;
     for (const b of [imageData?.barcode, ...(imageData?.barcodes || [])].filter(Boolean)) {
@@ -303,6 +303,9 @@ export async function analyzeProduct(payload) {
       (Boolean(merged.nutrition?._fromImage) &&
         nutritionFieldCount(merged.nutrition) >= 2 &&
         merged.nutrition?.energy_kcal != null),
+    ocrTextPreview: imageData?.text
+      ? imageData.text.replace(/\s+/g, ' ').trim().slice(0, 180)
+      : null,
     autoNutritionOcr: Boolean(payload.autoNutritionOcr),
     nutritionSource: sources.includes('open_food_facts')
       ? 'open_food_facts'

@@ -5,7 +5,11 @@ import {
   hasFullNutritionTable,
   isConfidentLabelNutrition,
 } from '../scoring/nutritionParse.js';
-import { extractLabelRegionBuffers, preprocessLabelBuffer } from './labelPreprocess.js';
+import {
+  extractLabelRegionBuffers,
+  preprocessLabelBuffer,
+  preprocessLabelBufferSoft,
+} from './labelPreprocess.js';
 
 /** Stop extra OCR passes once a label parse is this strong. */
 const STRONG_LABEL_SCORE = 80;
@@ -133,10 +137,14 @@ export async function recognizeLabelImage(worker, buffer, url) {
   let candidates = [];
 
   let regions;
-  try {
-    regions = await extractLabelRegionBuffers(buffer);
-  } catch {
+  if (url.includes('#label-crop')) {
     regions = [buffer];
+  } else {
+    try {
+      regions = await extractLabelRegionBuffers(buffer);
+    } catch {
+      regions = [buffer];
+    }
   }
 
   for (let i = 0; i < regions.length; i++) {
@@ -148,7 +156,13 @@ export async function recognizeLabelImage(worker, buffer, url) {
   if (bestScore(candidates) < STRONG_LABEL_SCORE) {
     try {
       for (let i = 0; i < regions.length; i++) {
-        const prepped = await preprocessLabelBuffer(regions[i]);
+        const soft = url.includes('#label-crop')
+          ? await preprocessLabelBufferSoft(regions[i])
+          : regions[i];
+        const prepped =
+          url.includes('#label-crop') && bestScore(candidates) < 45
+            ? await preprocessLabelBuffer(soft)
+            : soft;
         const regionUrl = `${url}#prep${i}`;
         candidates.push(...(await collectFromBuffer(worker, prepped, regionUrl)));
         if (bestScore(candidates) >= STRONG_LABEL_SCORE) break;

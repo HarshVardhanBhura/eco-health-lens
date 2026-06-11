@@ -34,6 +34,32 @@ export async function preprocessLabelBuffer(input) {
 }
 
 /**
+ * Lighter preprocess for already-cropped label regions (avoid destroying table text).
+ * @param {Buffer} input
+ */
+export async function preprocessLabelBufferSoft(input) {
+  if (!input?.length) return input;
+
+  const meta = await sharp(input).metadata();
+  const w = meta.width || 0;
+  const h = meta.height || 0;
+  const minSide = Math.min(w, h);
+
+  let pipeline = sharp(input).rotate().grayscale().normalize().sharpen({ sigma: 0.8 });
+  if (minSide > 0 && minSide < 1600) {
+    const scale = minSide < 800 ? 2 : 1.5;
+    pipeline = pipeline.resize({
+      width: Math.min(Math.round(w * scale), 3200),
+      height: Math.min(Math.round(h * scale), 3200),
+      fit: 'inside',
+      withoutEnlargement: false,
+    });
+  }
+
+  return pipeline.jpeg({ quality: 95, mozjpeg: true }).toBuffer();
+}
+
+/**
  * Amazon IN gallery images are often square composites (pack + label side by side).
  * OCR the right/bottom crops where the nutrition table usually lives.
  * @param {Buffer} input

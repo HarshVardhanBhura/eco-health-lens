@@ -166,6 +166,14 @@ function collectBarcodesFromText(text, barcodesFound) {
 /**
  * @param {Set<string>} barcodesFound
  */
+function ocrBufferKey(buf) {
+  const url = buf?.url || '';
+  if (url.includes('#label-crop')) {
+    return `${amazonImageIdFromUrl(url) || url}:crop`;
+  }
+  return amazonImageIdFromUrl(url) || url;
+}
+
 function pickBestBarcode(barcodesFound) {
   const list = [...barcodesFound];
   if (!list.length) return null;
@@ -339,9 +347,17 @@ export async function extractFromProductImages(images, options = {}) {
       (b) => amazonImageIdFromUrl(b.url || '') === selectedImageId
     );
     if (filtered.length) imageBuffers = filtered;
+    const cropOnly = imageBuffers.filter((b) => b.url?.includes('#label-crop'));
+    if (cropOnly.length) imageBuffers = cropOnly;
   }
 
-  if (options.autoNutritionOcr && imageBuffers.length) {
+  imageBuffers = [...imageBuffers].sort(
+    (a, b) =>
+      (b.url?.includes('#label-crop') ? 2 : 0) -
+      (a.url?.includes('#label-crop') ? 2 : 0)
+  );
+
+  if (options.autoNutritionOcr && imageBuffers.length && !ocrSelectedOnly) {
     const dual = imageBuffers.filter((b) => b.nutritionImage && b.barcodeImage);
     const nutritionOnly = imageBuffers.filter((b) => b.nutritionImage && !b.barcodeImage);
     const barcodeOnly = imageBuffers.filter((b) => b.barcodeImage && !b.nutritionImage);
@@ -351,7 +367,7 @@ export async function extractFromProductImages(images, options = {}) {
     const addBuffers = (list, max) => {
       for (const b of list) {
         if (merged.length >= MAX_IMAGES) return;
-        const id = amazonImageIdFromUrl(b.url || '') || b.url;
+        const id = ocrBufferKey(b);
         if (id && seen.has(id)) continue;
         if (id) seen.add(id);
         merged.push(b);
