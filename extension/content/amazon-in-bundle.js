@@ -636,35 +636,21 @@ function pickBalancedOcrQueue(ranked, limit) {
  * @param {string} [landingImageUrl]
  */
 /**
- * Amazon IN packs: 2nd thumb ≈ nutrition table, 4th ≈ barcode (alt text is usually empty).
- * @param {Array<{ url: string, alt?: string, galleryIndex?: number }>} images
+ * Queue every non-landing gallery thumb for OCR — label/barcode position varies by listing.
+ * @param {ReturnType<typeof rankImagesForAutoNutritionOcr>['gallerySweep']} gallerySweep
  * @param {Array<{ url: string, alt: string, priority: number, nutritionImage?: boolean, barcodeImage?: boolean }>} queue
  */
-function queueGalleryPositionTargets(images, queue) {
-  const byIdx = (images || [])
-    .filter((i) => i.galleryIndex != null)
-    .sort((a, b) => a.galleryIndex - b.galleryIndex);
-
-  const push = (img, opts) => {
+function queueNonLandingGalleryForOcr(gallerySweep, queue) {
+  for (const img of gallerySweep.filter((i) => !i.isLanding)) {
     const id = amazonImageId(img.url);
-    if (queue.some((q) => amazonImageId(q.url) === id)) return;
+    if (queue.some((q) => amazonImageId(q.url) === id)) continue;
     queue.push({
       url: img.url,
       alt: img.alt || '',
-      priority: opts.priority,
-      nutritionImage: opts.nutritionImage,
-      barcodeImage: opts.barcodeImage,
+      priority: 4700 + img.nutritionScore,
+      nutritionImage: true,
+      barcodeImage: true,
     });
-  };
-
-  for (const img of byIdx.filter((i) => i.galleryIndex === 1)) {
-    push(img, { priority: 5700, nutritionImage: true, barcodeImage: false });
-  }
-  for (const img of byIdx.filter((i) => i.galleryIndex === 3)) {
-    push(img, { priority: 5650, nutritionImage: true, barcodeImage: true });
-  }
-  for (const img of byIdx.filter((i) => i.galleryIndex === 2 || i.galleryIndex === 4)) {
-    push(img, { priority: 5350, nutritionImage: true, barcodeImage: true });
   }
 }
 
@@ -734,30 +720,15 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
       landingImageUrl
     );
 
-    queueGalleryPositionTargets(images, queue);
-
-    // Label-first: only queue likely nutrition-table images (max 3). Skipping
-    // generic gallery sweeps keeps OCR within Render's ~30s request limit.
+    // Alt-text hits first when Amazon provides them (higher priority).
     for (const img of nutrition.slice(0, 3)) {
       queue.push({
         url: img.url,
         alt: img.alt,
         priority: 5000 + img.nutritionScore,
         nutritionImage: true,
+        barcodeImage: true,
       });
-    }
-
-    if (!queue.length) {
-      for (const img of gallerySweep.slice(0, 2)) {
-        const id = amazonImageId(img.url);
-        if (queue.some((q) => amazonImageId(q.url) === id)) continue;
-        queue.push({
-          url: img.url,
-          alt: img.alt,
-          priority: 3500 + img.nutritionScore,
-          nutritionImage: isNutritionGalleryImage(img.alt, img.url),
-        });
-      }
     }
 
     for (const img of gallerySweep
@@ -769,23 +740,13 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
         url: img.url,
         alt: img.alt,
         priority: 5200,
-        nutritionImage: false,
-        barcodeImage: true,
-      });
-    }
-
-    // Fallback: any later gallery thumbs not already queued (by score, not position).
-    for (const img of gallerySweep.filter((i) => !i.isLanding).slice(0, 4)) {
-      const id = amazonImageId(img.url);
-      if (queue.some((q) => amazonImageId(q.url) === id)) continue;
-      queue.push({
-        url: img.url,
-        alt: img.alt || 'gallery back',
-        priority: 5100,
         nutritionImage: true,
         barcodeImage: true,
       });
     }
+
+    // Position varies by listing — try all non-landing gallery thumbs; OCR picks the label.
+    queueNonLandingGalleryForOcr(gallerySweep, queue);
 
     for (const img of ingredients.slice(0, 1)) {
       const id = amazonImageId(img.url);
