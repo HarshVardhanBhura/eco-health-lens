@@ -16,10 +16,10 @@ export function normalizeOcrText(text) {
 
 /** Per-100g plausible ranges (reject OCR kcal/GDA values assigned as grams). */
 const PER_100G_LIMITS = {
-  energy_kcal: { min: 150, max: 500 },
+  energy_kcal: { min: 150, max: 600 },
   protein_g: { min: 0, max: 35 },
   carbs_g: { min: 0, max: 90 },
-  fat_g: { min: 0, max: 70 },
+  fat_g: { min: 0, max: 75 },
   saturated_fat_g: { min: 0, max: 40 },
   trans_fat_g: { min: 0, max: 5 },
   sugar_g: { min: 0, max: 60 },
@@ -117,12 +117,13 @@ function extractExplicitKcalValues(text) {
 }
 
 function pickBestEnergyKcal(candidates, nutrition) {
-  const uniq = [...new Set(candidates.filter((n) => n >= 300 && n <= 495))];
+  const uniq = [...new Set(candidates.filter((n) => n >= 300 && n <= 600))];
   if (!uniq.length) return null;
 
   const est = estimateKcalFromMacros(nutrition);
   const inLabelBand = uniq.filter((n) => n >= 360 && n <= 430);
   const gdaBand = uniq.filter((n) => n > 430 && n <= 470);
+  const highFatBand = uniq.filter((n) => n > 470 && n <= 600);
 
   if (inLabelBand.length && gdaBand.length) {
     return inLabelBand.length === 1
@@ -139,7 +140,14 @@ function pickBestEnergyKcal(candidates, nutrition) {
     );
   }
 
-  if (est != null && est >= 280 && est <= 500) {
+  if (highFatBand.length === 1) return highFatBand[0];
+  if (highFatBand.length > 1 && est != null && est > 450) {
+    return highFatBand.reduce((a, b) =>
+      Math.abs(a - est) <= Math.abs(b - est) ? a : b
+    );
+  }
+
+  if (est != null && est >= 280 && est <= 600) {
     let best = uniq[0];
     let bestDiff = Math.abs(best - est);
     for (const c of uniq) {
@@ -192,7 +200,7 @@ export function refineEnergyFromLabel(text, nutrition) {
   for (const line of block.split(/\n/)) {
     if (!/energy/i.test(line)) continue;
     const nums = (line.match(/\d+\.?\d*/g) || []).map((x) => parseFloat(x));
-    const per100 = nums.find((n) => n >= 300 && n <= 495);
+    const per100 = nums.find((n) => n >= 300 && n <= 600);
     if (per100 != null) candidates.push(per100);
   }
 
@@ -206,7 +214,7 @@ export function refineEnergyFromLabel(text, nutrition) {
   if (inline) {
     for (const m of inline[1].match(/\d{3}(?:\.\d{1,2})?/g) || []) {
       const v = parseFloat(m);
-      if (v >= 300 && v <= 495) candidates.push(v);
+      if (v >= 300 && v <= 600) candidates.push(v);
     }
   }
 

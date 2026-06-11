@@ -552,6 +552,39 @@ async function measureImageBlob(blob, url = '') {
   }
 }
 
+/**
+ * Side-by-side pack + nutrition table composites (common on Amazon IN).
+ * @param {Blob} blob
+ */
+async function cropWideImageLabelHalf(blob) {
+  try {
+    const bmp = await createImageBitmap(blob);
+    const ratio = bmp.width / Math.max(bmp.height, 1);
+    if (ratio < 1.2) {
+      bmp.close();
+      return null;
+    }
+    const x = Math.floor(bmp.width * 0.4);
+    const w = bmp.width - x;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = bmp.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      bmp.close();
+      return null;
+    }
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, w, bmp.height);
+    ctx.drawImage(bmp, x, 0, w, bmp.height, 0, 0, w, bmp.height);
+    bmp.close();
+    const out = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.94));
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
 async function preprocessImageForOcr(blob) {
   try {
     const bmp = await createImageBitmap(blob);
@@ -828,7 +861,7 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
   /** @type {Array<{ base64: string, mimeType: string, alt: string, url: string }>} */
   const buffers = [];
 
-  const maxBuffers = selectedOnly ? 1 : autoNutrition ? 6 : 3;
+  const maxBuffers = selectedOnly ? 2 : autoNutrition ? 6 : 3;
   const toFetch = selectedOnly
     ? ranked.slice(0, 1)
     : pickBalancedOcrQueue(ranked, maxBuffers);
@@ -880,6 +913,28 @@ async function fetchImagesForOcr(images, landingImageUrl, options = {}) {
         barcodeImage: Boolean(img.barcodeImage),
         clarity,
       });
+
+      if (nutritionImage || selectedOnly) {
+        const crop = await cropWideImageLabelHalf(blob);
+        if (crop && buffers.length < maxBuffers) {
+          const cropClarity = await measureImageBlob(crop, img.url);
+          const cropBoosted =
+            cropClarity.rating === 'low' || cropClarity.width < 1200
+              ? await preprocessImageForOcr(crop)
+              : crop;
+          const { base64: cropB64, mimeType: cropMime } = await blobToBase64(cropBoosted);
+          buffers.push({
+            base64: cropB64,
+            mimeType: cropMime,
+            alt: `${img.alt || ''} (label crop)`.trim(),
+            url: `${img.url}#label-crop`,
+            nutritionImage: true,
+            barcodeImage: false,
+            clarity: cropClarity,
+          });
+          console.info('[EcoHealth] added wide-image label crop for OCR:', id);
+        }
+      }
     } catch (e) {
       console.warn('[EcoHealth] gallery image fetch failed', img.url?.slice(0, 80), e);
     }
@@ -1316,12 +1371,13 @@ function startLandingImageWatcher(selectors) {
         updateBadge(result);
         if (
           freshPayload.ocrSelectedOnly &&
-          result.enrichment?.labelTableDetected === false
+          result.enrichment?.labelTableDetected === false &&
+          result.enrichment?.nutritionSource !== 'label_ocr'
         ) {
           console.warn(
-            '[EcoHealth] No nutrition table on image',
+            '[EcoHealth] Could not parse nutrition from image',
             id,
-            '— select the nutrition facts thumbnail (not the front pack).'
+            '— OCR ran but the table was not readable. Try the zoomed nutrition slide if available.'
           );
         }
         if (result.enrichment) {

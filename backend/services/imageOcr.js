@@ -190,15 +190,19 @@ function pickNutritionWinner(state, selectedImageId, selectedOnly) {
           b.count -
           ((a.confident ? 10 : 0) + a.count)
       )[0];
-    if (fromSelected?.nutrition && hasPackLabelSection(fromSelected.text || '')) {
+    if (fromSelected?.nutrition) {
+      const labelText = fromSelected.text || combinedText;
       const n = refineEnergyFromLabel(
-        fromSelected.text || combinedText,
+        labelText,
         sanitizeNutritionPer100g(fromSelected.nutrition)
       );
       const ok =
         n &&
-        (isConfidentLabelNutrition(n, fromSelected.text || '') ||
-          ((fromSelected.ocrScore || 0) >= 55 && nutritionFieldCount(n) >= 2));
+        (isConfidentLabelNutrition(n, labelText) ||
+          ((fromSelected.ocrScore || 0) >= 45 && nutritionFieldCount(n) >= 2) ||
+          (selectedOnly &&
+            nutritionFieldCount(n) >= 3 &&
+            (hasPackLabelSection(labelText) || hasFullNutritionTable(labelText))));
       if (ok) {
         return {
           nutrition: n,
@@ -206,6 +210,26 @@ function pickNutritionWinner(state, selectedImageId, selectedOnly) {
           imageId: selectedImageId,
         };
       }
+    }
+  }
+
+  if (selectedOnly && selectedImageId && combinedText.trim()) {
+    const parsed = refineEnergyFromLabel(
+      combinedText,
+      sanitizeNutritionPer100g(parseBestNutritionBlock(combinedText))
+    );
+    if (
+      parsed &&
+      nutritionFieldCount(parsed) >= 2 &&
+      (isConfidentLabelNutrition(parsed, combinedText) ||
+        hasFullNutritionTable(combinedText) ||
+        nutritionFieldCount(parsed) >= 3)
+    ) {
+      return {
+        nutrition: parsed,
+        count: nutritionFieldCount(parsed),
+        imageId: selectedImageId,
+      };
     }
   }
 
@@ -258,13 +282,15 @@ function applyOcrText(state, text, imageId = null, options = {}) {
   const labelChunk = hasPackLabelSection(text);
   const labelScore = scoreLabelOcrText(text);
 
-  if (nutrition && count > 0 && labelChunk) {
+  const tableLike =
+    labelChunk || hasFullNutritionTable(text) || (labelScore.score || 0) >= 40;
+  if (nutrition && count > 0 && tableLike) {
     state.perImageNutrition.push({
       nutrition: labelScore.nutrition || nutrition,
       count: nutritionFieldCount(labelScore.nutrition || nutrition),
       imageId,
       text,
-      labelChunk,
+      labelChunk: labelChunk || hasFullNutritionTable(text),
       confident: labelScore.confident || isConfidentLabelNutrition(labelScore.nutrition || nutrition, text),
       ocrScore: labelScore.score,
     });
@@ -280,11 +306,12 @@ function applyOcrText(state, text, imageId = null, options = {}) {
     (state.bestNutritionImage ? 4 : 0) +
     (state.bestNutrition?.energy_kcal ? 2 : 0);
 
-  if (nutrition && labelChunk && score > bestScore) {
+  const strongParse = count >= 3 || (labelScore.score || 0) >= 50;
+  if (nutrition && (labelChunk || hasFullNutritionTable(text) || strongParse) && score > bestScore) {
     state.bestNutrition = labelScore.nutrition || nutrition;
     state.bestCount = nutritionFieldCount(state.bestNutrition);
     state.bestNutritionImageId = imageId;
-    state.bestFromLabelChunk = labelChunk;
+    state.bestFromLabelChunk = labelChunk || hasFullNutritionTable(text);
     state.bestNutritionImage = Boolean(options.nutritionImage);
     state.bestOcrScore = labelScore.score;
   }
